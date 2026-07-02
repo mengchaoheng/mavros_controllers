@@ -12,13 +12,16 @@ Trajectory trackking controller using [mavros](https://github.com/mavlink/mavros
 - /geometric_controller/ctrl_mode (default: MODE_BODYRATE)
 - /geometric_controller/enable_sim (default: true)
 - /geometric_controller/enable_gazebo_state (default: false)
-- /geometric_controller/max_acc (default: 7.0)
+- /geometric_controller/max_acc (default: 10.0; ROS outer-loop feedback acceleration clip)
 - /geometric_controller/yaw_heading (default: 0.0)
 - /geometric_controller/drag_dx (default: 0.0)
 - /geometric_controller/drag_dy (default: 0.0)
 - /geometric_controller/drag_dz (default: 0.0)
-- /geometric_controller/attctrl_constant (default: 0.2)
-- /geometric_controller/normalizedthrust_constant (default: 0.1)
+- /geometric_controller/KR_x (default: 3.0; roll attitude error to body-rate gain)
+- /geometric_controller/KR_y (default: 3.0; pitch attitude error to body-rate gain)
+- /geometric_controller/KR_z (default: 2.0; yaw attitude error to body-rate gain)
+- /geometric_controller/normalizedthrust_constant (default: 0.02202 for Iris specific-force commands)
+- /geometric_controller/normalizedthrust_offset (default: 0.0)
 
 
 ## Topics

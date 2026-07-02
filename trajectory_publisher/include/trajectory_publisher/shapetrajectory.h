@@ -45,6 +45,13 @@
 #define TRAJ_CIRCLE 1
 #define TRAJ_LAMNISCATE 2
 #define TRAJ_STATIONARY 3
+#define TRAJ_FIGURE8_HORIZONTAL 4
+#define TRAJ_FIGURE8_VERTICAL 5
+#define TRAJ_HELIX_FLIP 6
+#define TRAJ_HELIX_FLIP_Y 7
+#define TRAJ_FLIP_LOOP_SINE 8
+#define TRAJ_FAST_CIRCLE 9
+#define TRAJ_RACE_TRACK_C 10
 
 class shapetrajectory : public trajectory {
  private:
@@ -56,11 +63,26 @@ class shapetrajectory : public trajectory {
   Eigen::Vector3d traj_origin_;
   Eigen::Vector3d traj_radial_;
   double traj_radius_, traj_omega_;
+  double traj_intensity_;
+  double traj_base_duration_;
+  double helix_turns_;
+  double race_track_max_speed_;
+  double trajectory_speed_;
+
+  static double clamp(double value, double low, double high);
+  static double periodForAccel(double length_coeff, double accel_limit, double min_period, double max_period);
+  double fixedSpeedOmega(double length_scale) const;
+  double figure8Omega(double long_amp, double short_amp) const;
+  double regularAccel() const;
+  double helixAccel() const;
 
  public:
   shapetrajectory(int type);
   virtual ~shapetrajectory();
   void initPrimitives(Eigen::Vector3d pos, Eigen::Vector3d axis, double omega);
+  void setBenchmarkParams(double intensity, double base_duration, double helix_turns, double race_track_max_speed);
+  void setTrajectorySpeed(double speed);
+  void setType(int type);
   void generatePrimitives(Eigen::Vector3d pos);
   void generatePrimitives(Eigen::Vector3d pos, Eigen::Vector3d vel);
   void generatePrimitives(Eigen::Vector3d pos, Eigen::Vector3d vel, Eigen::Vector3d jerk);

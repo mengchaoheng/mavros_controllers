@@ -57,12 +57,15 @@
 #include <std_msgs/String.h>
 #include <std_srvs/SetBool.h>
 #include "controller_msgs/FlatTarget.h"
+#include <dynamic_reconfigure/server.h>
+#include <trajectory_publisher/TrajectoryPublisherConfig.h>
 #include "trajectory_publisher/polynomialtrajectory.h"
 #include "trajectory_publisher/shapetrajectory.h"
 #include "trajectory_publisher/trajectory.h"
 
 #define REF_TWIST 8
 #define REF_SETPOINTRAW 16
+#define REF_POSITION 32
 
 using namespace std;
 using namespace Eigen;
@@ -74,6 +77,7 @@ class trajectoryPublisher {
   ros::Publisher referencePub_;
   ros::Publisher flatreferencePub_;
   ros::Publisher rawreferencePub_;
+  ros::Publisher positionreferencePub_;
   ros::Publisher global_rawreferencePub_;
   std::vector<ros::Publisher> primitivePub_;
   ros::Subscriber motionselectorSub_;
@@ -94,6 +98,11 @@ class trajectoryPublisher {
   Eigen::Vector3d p_mav_, v_mav_;
   Eigen::Vector3d shape_origin_, shape_axis_;
   double shape_omega_ = 0;
+  double traj_intensity_;
+  double traj_base_duration_;
+  double helix_turns_;
+  double race_track_max_speed_;
+  double trajectory_speed_;
   double theta_ = 0.0;
   double controlUpdate_dt_;
   double primitive_duration_;
@@ -101,6 +110,7 @@ class trajectoryPublisher {
   double init_pos_x_, init_pos_y_, init_pos_z_;
   double takeoff_position_tolerance_;
   double takeoff_velocity_tolerance_;
+  double start_hold_duration_;
   double trajectory_start_ramp_duration_;
   double max_jerk_;
   int pubreference_type_;
@@ -108,7 +118,11 @@ class trajectoryPublisher {
   int motion_selector_;
   bool takeoff_before_trajectory_;
   bool trajectory_started_;
+  bool start_hold_started_;
+  bool shape_trajectory_mode_;
   Eigen::Vector3d takeoff_target_;
+  ros::Time start_hold_begin_time_;
+  dynamic_reconfigure::Server<trajectory_publisher::TrajectoryPublisherConfig> dyn_server_;
 
   std::vector<std::shared_ptr<trajectory>> motionPrimitives_;
   std::vector<Eigen::Vector3d> inputs_;
@@ -121,9 +135,13 @@ class trajectoryPublisher {
   void pubrefState();
   void pubflatrefState();
   void pubrefSetpointRaw();
+  void pubrefPositionSetpoint();
   void pubrefSetpointRawGlobal();
   void initializePrimitives(int type);
   void updatePrimitives();
+  void applyShapeParams();
+  void resetTrajectoryStart();
+  void dynamicReconfigureCallback(trajectory_publisher::TrajectoryPublisherConfig& config, uint32_t level);
   void updateTakeoffTarget();
   void setTakeoffReference();
   bool takeoffTargetReached();

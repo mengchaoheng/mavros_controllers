@@ -115,10 +115,10 @@ source Tools/setup_gazebo.bash $(pwd) $(pwd)/build/px4_sitl_default
 export ROS_PACKAGE_PATH=$ROS_PACKAGE_PATH:$(pwd)
 export ROS_PACKAGE_PATH=$ROS_PACKAGE_PATH:$(pwd)/Tools/sitl_gazebo
 ```
-The following launch file enables the geometric controller to follow a circular trajectory
+The following launch file starts the generic SITL trajectory-tracking case with online controller and trajectory switching.
 
 ``` bash
-roslaunch geometric_controller sitl_trajectory_track_circle.launch
+roslaunch geometric_controller sitl_trajectory_track.launch
 ```
 
 If the UAV does not takeoff, please open QGroundControl and enable virtual joystick as mentioned [here](https://docs.qgroundcontrol.com/master/en/SettingsView/VirtualJoystick.html)
@@ -133,13 +133,16 @@ The geometric controller publishes and subscribes the following topics.
     - /geometric_controller/ctrl_mode (default: MODE_BODYRATE)
     - /geometric_controller/enable_sim (default: true)
     - /geometric_controller/enable_gazebo_state (default: false)
-    - /geometric_controller/max_acc (default: 7.0)
+    - /geometric_controller/max_acc (default: 10.0; ROS outer-loop feedback acceleration clip)
     - /geometric_controller/yaw_heading (default: 0.0)
     - /geometric_controller/drag_dx (default: 0.0)
     - /geometric_controller/drag_dy (default: 0.0)
     - /geometric_controller/drag_dz (default: 0.0)
-    - /geometric_controller/attctrl_constant (default: 0.2)
-    - /geometric_controller/normalizedthrust_constant (default: 0.1)
+    - /geometric_controller/KR_x (default: 12.0; body-rate adaptation of `main.m` `px4_iris.attP(1)`)
+    - /geometric_controller/KR_y (default: 12.0; body-rate adaptation of `main.m` `px4_iris.attP(2)`)
+    - /geometric_controller/KR_z (default: 6.0; body-rate adaptation of `main.m` `px4_iris.attP(3)`)
+    - /geometric_controller/normalizedthrust_constant (default: 0.02206 for Iris specific-force commands)
+    - /geometric_controller/normalizedthrust_offset (default: 0.0)
 
 - Published Topics
 	- command/bodyrate_command ( [mavros_msgs/AttitudeTarget](http://docs.ros.org/api/mavros_msgs/html/msg/AttitudeTarget.html) )
@@ -162,9 +165,18 @@ Trajectory publisher publishes continous trajectories to the trajectory_controll
     - /trajectory_publisher/updaterate (default: 0.01)
     - /trajectory_publisher/horizon (default: 1.0)
     - /trajectory_publisher/maxjerk (default: 10.0)
-    - /trajectory_publisher/trajectory_type (default: 0)
-    - /trajectory_publisher/number_of_primitives (default: 7)
-    - /trajectory_publisher/shape_radius (default: 1.0)
+    - /trajectory_publisher/trajName (default: 1)
+    - /trajectory_publisher/trajIntensity (default: 0.75)
+    - /trajectory_publisher/Tend (default: 10.0)
+    - /trajectory_publisher/helixTurns (default: 5.0)
+    - /trajectory_publisher/raceTrackMaxSpeed (default: 19.4)
+    - /trajectory_publisher/trajectorySpeed (default: 0.3 m/s in the generic launch)
+    - /trajectory_publisher/shapeOmega (legacy circle/lamniscate angular rate)
+    - /trajectory_publisher/waitStartBeforeTrajectory (default: true)
+    - /trajectory_publisher/startPositionTolerance (default: 0.25)
+    - /trajectory_publisher/startVelocityTolerance (default: 0.5)
+    - /trajectory_publisher/startHoldDuration (default: 3.0)
+    - /trajectory_publisher/number_of_primitives (default: 7, legacy polynomial mode)
 
 - Published Topics
 	- reference/trajectory ( [nav_msgs/Path](http://docs.ros.org/kinetic/api/nav_msgs/html/msg/Path.html) )
@@ -224,3 +236,100 @@ make px4_sitl_default sitl_gazebo
 ```
 
 or refer to [this issue](https://github.com/PX4/Firmware/issues?utf8=%E2%9C%93&q=%2Firis%2Firis.sdf+) the [ROS with Gazebo Simulation PX4 Documentation](https://dev.px4.io/master/en/simulation/ros_interface.html). 
+
+## Online Controller and Trajectory Switching
+
+The benchmark controller and trajectory names follow `main.m`. The ROS node exposes them through `dynamic_reconfigure`, so they can be switched while the nodes are running. `controllerName=0` keeps the original package controller path unchanged.
+
+Start a SITL tracking case first:
+
+```bash
+roslaunch geometric_controller sitl_trajectory_track.launch
+```
+
+`sitl_trajectory_track.launch` is the generic online-switching entry point. By default it starts with `visualization=false`, `controllerName=0` (`legacy`), `trajName=1` (`circle`), and `trajectorySpeed=0.3` m/s. The older `*_circle.launch` and `*_lamniscate.launch` files are kept as compatibility examples.
+
+The launch file starts `rqt_reconfigure` automatically. In the GUI:
+
+- select `/geometric_controller` and change `controllerName`
+- select `/trajectory_publisher` and change `trajName`
+- tune gains online with `Kp_x/y/z`, `Kv_x/y/z`, `KR_x/y/z`
+- tune acceleration INDI with `indiAccelFeedback`, `indiFilterCutoffHz`, `indiMaxCorrectionAcc`
+- keep `waitStartBeforeTrajectory` enabled to hold the new trajectory start point until the vehicle reaches it
+
+For the original package controller, `KR` is converted internally to the old attitude time constant with `tau = 2 / mean(KR_x, KR_y, KR_z)`.
+For the new body-rate controllers, `Kp=[10,10,10]` and `Kv=[6,6,6]` match `main.m`. The sent angular-rate command is `Omega_ref + KR * attitude_error`, so the default `KR=[12,12,6]` matches `main.m` `px4_iris.attP`; the paper torque-level `KR=[150,150,3]` and `KOmega=[20,20,8]` are not sent through MAVROS because PX4 owns the rate loop.
+The thrust sent to PX4 is `clamp(normalizedthrust_constant * thrust + normalizedthrust_offset, 0, 1)`.
+In the current body-rate adaptation, `thrust` is specific force in m/s^2, so the Iris-aligned scale is `m/Tmax = 0.75 / (4 * 8.5) ~= 0.02206`, close to `MPC_THR_HOVER / g = 0.216 / 9.81 ~= 0.02202`. If this node is changed to command physical thrust in newtons, use `1/Tmax ~= 0.02941` instead.
+At startup and after each `trajName` change, the trajectory publisher commands the trajectory start point with zero velocity and zero acceleration. The trajectory time starts only after the vehicle is armed, in OFFBOARD mode, inside `startPositionTolerance`/`startVelocityTolerance`, and after hovering there for `startHoldDuration`.
+
+The same switches can be done from the command line:
+
+```bash
+rosrun dynamic_reconfigure dynparam set /geometric_controller controllerName 0
+rosrun dynamic_reconfigure dynparam set /trajectory_publisher trajName 1
+rosrun dynamic_reconfigure dynparam set /trajectory_publisher trajectorySpeed 0.3
+```
+
+Controller choices:
+
+| value | `controllerName` |
+| --- | --- |
+| 0 | `legacy` |
+| 1 | `geometric` |
+| 2 | `lee` |
+| 3 | `johnson` |
+| 4 | `sun_dfbc` |
+| 5 | `sun_dfbc_indi` |
+| 6 | `tal` |
+| 7 | `geometric_indi` |
+
+Trajectory choices:
+
+| value | `trajName` |
+| --- | --- |
+| 0 | `zero` |
+| 1 | `circle` |
+| 2 | `lamniscate` |
+| 3 | `stationary` |
+| 4 | `figure8_horizontal` |
+| 5 | `figure8_vertical` |
+| 6 | `helix_flip` |
+| 7 | `helix_flip_y` |
+| 8 | `flip_loop_sine` |
+| 9 | `fast_circle` |
+| 10 | `race_track_c` |
+
+Example tracking cases:
+
+```bash
+# Tal controller on helix_flip
+rosrun dynamic_reconfigure dynparam set /geometric_controller controllerName 6
+rosrun dynamic_reconfigure dynparam set /trajectory_publisher trajName 6
+
+# Lee controller on fast_circle
+rosrun dynamic_reconfigure dynparam set /geometric_controller controllerName 2
+rosrun dynamic_reconfigure dynparam set /trajectory_publisher trajName 9
+
+# Sun DFBC INDI on race_track_c
+rosrun dynamic_reconfigure dynparam set /geometric_controller controllerName 5
+rosrun dynamic_reconfigure dynparam set /trajectory_publisher trajName 10
+```
+
+Trajectory intensity and timing are also online parameters:
+
+```bash
+rosrun dynamic_reconfigure dynparam set /geometric_controller max_acc 3.0
+rosrun dynamic_reconfigure dynparam set /trajectory_publisher trajIntensity 0.75
+rosrun dynamic_reconfigure dynparam set /trajectory_publisher Tend 10.0
+rosrun dynamic_reconfigure dynparam set /trajectory_publisher helixTurns 5.0
+rosrun dynamic_reconfigure dynparam set /trajectory_publisher raceTrackMaxSpeed 19.4
+rosrun dynamic_reconfigure dynparam set /trajectory_publisher trajectorySpeed 0.3
+rosrun dynamic_reconfigure dynparam set /trajectory_publisher startPositionTolerance 0.25
+rosrun dynamic_reconfigure dynparam set /trajectory_publisher startVelocityTolerance 0.5
+rosrun dynamic_reconfigure dynparam set /trajectory_publisher startHoldDuration 3.0
+```
+
+For slow constant-speed flight, use `trajName=1` (`circle`) and tune `trajectorySpeed` directly. Start around `0.3` m/s, then increase gradually after the vehicle can hold the path cleanly.
+
+Switching `trajName` resets the trajectory start state and waits at the new start point before playing the trajectory.

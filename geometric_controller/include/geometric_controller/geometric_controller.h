@@ -120,12 +120,34 @@ class geometricCtrl {
   int ctrl_mode_;
   bool landing_commanded_{false};
   bool sim_enable_;
+  bool offboard_manager_only_{false};
   bool velocity_yaw_;
   double kp_rot_, kd_rot_;
   double reference_request_dt_;
   double attctrl_tau_;
   double norm_thrust_const_, norm_thrust_offset_;
   double max_fb_acc_;
+  int controller_type_;
+  double KR_x_, KR_y_, KR_z_;
+  double indi_accel_feedback_, indi_filter_cutoff_hz_, indi_max_correction_acc_;
+  Eigen::Vector3d filteredAcc_;
+  Eigen::Vector3d previousVel_;
+  ros::Time previousControlTime_;
+  bool accel_indi_initialized_{false};
+  Eigen::Matrix3d previousDesiredRot_{Eigen::Matrix3d::Identity()};
+  ros::Time previousDesiredAttTime_;
+  bool desired_att_initialized_{false};
+  bool use_position_takeoff_{true};
+  bool position_takeoff_complete_{false};
+  bool position_takeoff_hold_started_{false};
+  bool position_takeoff_target_locked_{false};
+  double position_takeoff_tolerance_{0.25};
+  double position_takeoff_velocity_tolerance_{0.35};
+  double position_takeoff_hold_duration_{4.0};
+  Eigen::Vector3d position_takeoff_target_;
+  Eigen::Vector3d latest_reference_pos_;
+  bool received_reference_{false};
+  ros::Time position_takeoff_hold_begin_;
 
   mavros_msgs::State current_state_;
   mavros_msgs::CommandBool arm_cmd_;
@@ -136,15 +158,16 @@ class geometricCtrl {
   Eigen::Vector3d targetPos_, targetVel_, targetAcc_, targetJerk_, targetSnap_, targetPos_prev_, targetVel_prev_;
   Eigen::Vector3d mavPos_, mavVel_, mavRate_;
   double mavYaw_;
-  Eigen::Vector3d gravity_{Eigen::Vector3d(0.0, 0.0, -9.8)};
+  Eigen::Vector3d gravity_{Eigen::Vector3d(0.0, 0.0, -9.81)};
   Eigen::Vector4d mavAtt_, q_des;
   Eigen::Vector4d cmdBodyRate_;  //{wx, wy, wz, Thrust}
-  Eigen::Vector3d Kpos_, Kvel_, D_;
+  Eigen::Vector3d Kpos_, Kvel_, KR_, D_;
   double Kpos_x_, Kpos_y_, Kpos_z_, Kvel_x_, Kvel_y_, Kvel_z_;
   int posehistory_window_;
 
   void pubMotorCommands();
   void pubRateCommands(const Eigen::Vector4d &cmd, const Eigen::Vector4d &target_attitude);
+  void pubPositionTakeoffSetpoint();
   void pubReferencePose(const Eigen::Vector3d &target_position, const Eigen::Vector4d &target_attitude);
   void pubPoseHistory();
   void pubSystemStatus();
@@ -164,9 +187,29 @@ class geometricCtrl {
   bool landCallback(std_srvs::SetBool::Request &request, std_srvs::SetBool::Response &response);
   geometry_msgs::PoseStamped vector3d2PoseStampedMsg(Eigen::Vector3d &position, Eigen::Vector4d &orientation);
   void computeBodyRateCmd(Eigen::Vector4d &bodyrate_cmd, const Eigen::Vector3d &target_acc);
+  Eigen::Vector4d computeCascadedBodyRateCmd(const Eigen::Vector3d &specific_force,
+                                             const Eigen::Vector3d &attitude_error);
   Eigen::Vector3d controlPosition(const Eigen::Vector3d &target_pos, const Eigen::Vector3d &target_vel,
                                   const Eigen::Vector3d &target_acc);
+  Eigen::Vector4d controllerPDGeometric();
+  Eigen::Vector4d controllerLee();
+  Eigen::Vector4d controllerJohnson();
+  Eigen::Vector4d controllerSunDFBC();
+  Eigen::Vector4d controllerSunDFBCINDI();
+  Eigen::Vector4d controllerTal();
+  Eigen::Vector4d controllerGeometricINDI();
+  Eigen::Vector3d outerLoopAcceleration();
   Eigen::Vector3d poscontroller(const Eigen::Vector3d &pos_error, const Eigen::Vector3d &vel_error);
+  void updateControllerGains();
+  double attitudeTauFromKR() const;
+  void syncLegacyAttitudeGain();
+  Eigen::Vector3d accelerationIndiCorrection(const Eigen::Vector3d &nominal_acc);
+  Eigen::Vector3d rotorDragAcceleration(const Eigen::Vector3d &reference_acc, const Eigen::Vector3d &reference_vel);
+  Eigen::Vector3d logSO3(const Eigen::Matrix3d &R) const;
+  Eigen::Vector3d leeSO3Error(const Eigen::Matrix3d &R, const Eigen::Matrix3d &Rd) const;
+  Eigen::Vector3d quaternionAttitudeError(const Eigen::Vector4d &q, const Eigen::Vector4d &qd) const;
+  bool positionTakeoffReady() const;
+  const char *controllerName() const;
   Eigen::Vector4d attcontroller(const Eigen::Vector4d &ref_att, const Eigen::Vector3d &ref_acc,
                                 Eigen::Vector4d &curr_att);
 
@@ -182,7 +225,7 @@ class geometricCtrl {
     }
   };
   geometry_msgs::Pose home_pose_;
-  bool received_home_pose;
+  bool received_home_pose{false};
   std::shared_ptr<Control> controller_;
 
  public:

@@ -12,11 +12,16 @@ find_package(catkin REQUIRED COMPONENTS
   mavros_msgs
   mavlink
   controller_msgs
+  dynamic_reconfigure
+)
+
+generate_dynamic_reconfigure_options(
+  cfg/TrajectoryPublisher.cfg
 )
 
 catkin_package(
   INCLUDE_DIRS include
-  CATKIN_DEPENDS roscpp rospy std_msgs nav_msgs geometry_msgs tf mav_planning_msgs controller_msgs mavros_msgs
+  CATKIN_DEPENDS roscpp rospy std_msgs nav_msgs geometry_msgs tf mav_planning_msgs controller_msgs mavros_msgs dynamic_reconfigure
 )
 
 include_directories(
@@ -35,7 +40,7 @@ add_executable(trajectory_publisher
         src/polynomialtrajectory.cpp
         src/shapetrajectory.cpp
 )
-add_dependencies(${PROJECT_NAME} ${catkin_EXPORTED_TARGETS})
+add_dependencies(${PROJECT_NAME} ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 target_link_libraries(${PROJECT_NAME} ${catkin_LIBRARIES})
 ##########
 # EXPORT #

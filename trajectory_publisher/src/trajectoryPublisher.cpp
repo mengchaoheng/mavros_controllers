@@ -42,12 +42,20 @@
 
 using namespace std;
 using namespace Eigen;
+
+namespace {
+bool usesLegacyShapeOmega(int trajectory_type) {
+  return trajectory_type == TRAJ_CIRCLE || trajectory_type == TRAJ_LAMNISCATE || trajectory_type == TRAJ_STATIONARY;
+}
+}  // namespace
+
 trajectoryPublisher::trajectoryPublisher(const ros::NodeHandle& nh, const ros::NodeHandle& nh_private)
     : nh_(nh), nh_private_(nh_private), motion_selector_(0) {
   trajectoryPub_ = nh_.advertise<nav_msgs::Path>("trajectory_publisher/trajectory", 1);
   referencePub_ = nh_.advertise<geometry_msgs::TwistStamped>("reference/setpoint", 1);
   flatreferencePub_ = nh_.advertise<controller_msgs::FlatTarget>("reference/flatsetpoint", 1);
   rawreferencePub_ = nh_.advertise<mavros_msgs::PositionTarget>("mavros/setpoint_raw/local", 1);
+  positionreferencePub_ = nh_.advertise<geometry_msgs::PoseStamped>("mavros/setpoint_position/local", 1);
   global_rawreferencePub_ = nh_.advertise<mavros_msgs::GlobalPositionTarget>("mavros/setpoint_raw/global", 1);
   motionselectorSub_ =
       nh_.subscribe("trajectory_publisher/motionselector", 1, &trajectoryPublisher::motionselectorCallback, this,
@@ -70,18 +78,48 @@ trajectoryPublisher::trajectoryPublisher(const ros::NodeHandle& nh, const ros::N
   nh_private_.param<double>("updaterate", controlUpdate_dt_, 0.01);
   nh_private_.param<double>("horizon", primitive_duration_, 1.0);
   nh_private_.param<double>("maxjerk", max_jerk_, 10.0);
-  nh_private_.param<double>("shape_omega", shape_omega_, 1.5);
-  nh_private_.param<bool>("takeoff_before_trajectory", takeoff_before_trajectory_, true);
-  nh_private_.param<double>("takeoff_position_tolerance", takeoff_position_tolerance_, 0.25);
-  nh_private_.param<double>("takeoff_velocity_tolerance", takeoff_velocity_tolerance_, 0.5);
-  nh_private_.param<double>("trajectory_start_ramp_duration", trajectory_start_ramp_duration_, 2.0);
-  nh_private_.param<int>("trajectory_type", trajectory_type_, 0);
+  if (!nh_private_.getParam("shapeOmega", shape_omega_)) {
+    nh_private_.param<double>("shape_omega", shape_omega_, 1.5);
+  }
+  if (!nh_private_.getParam("trajIntensity", traj_intensity_)) {
+    nh_private_.param<double>("traj_intensity", traj_intensity_, 0.75);
+  }
+  if (!nh_private_.getParam("Tend", traj_base_duration_)) {
+    nh_private_.param<double>("traj_base_duration", traj_base_duration_, 10.0);
+  }
+  if (!nh_private_.getParam("helixTurns", helix_turns_)) {
+    nh_private_.param<double>("helix_turns", helix_turns_, 5.0);
+  }
+  if (!nh_private_.getParam("raceTrackMaxSpeed", race_track_max_speed_)) {
+    nh_private_.param<double>("race_track_max_speed", race_track_max_speed_, 19.4);
+  }
+  if (!nh_private_.getParam("trajectorySpeed", trajectory_speed_)) {
+    trajectory_speed_ = std::max(0.05, 2.0 * shape_omega_);
+  }
+  if (!nh_private_.getParam("waitStartBeforeTrajectory", takeoff_before_trajectory_)) {
+    nh_private_.param<bool>("takeoff_before_trajectory", takeoff_before_trajectory_, true);
+  }
+  if (!nh_private_.getParam("startPositionTolerance", takeoff_position_tolerance_)) {
+    nh_private_.param<double>("takeoff_position_tolerance", takeoff_position_tolerance_, 0.25);
+  }
+  if (!nh_private_.getParam("startVelocityTolerance", takeoff_velocity_tolerance_)) {
+    nh_private_.param<double>("takeoff_velocity_tolerance", takeoff_velocity_tolerance_, 0.5);
+  }
+  nh_private_.param<double>("startHoldDuration", start_hold_duration_, 3.0);
+  if (!nh_private_.getParam("trajectoryStartRampDuration", trajectory_start_ramp_duration_)) {
+    nh_private_.param<double>("trajectory_start_ramp_duration", trajectory_start_ramp_duration_, 2.0);
+  }
+  shape_trajectory_mode_ = nh_private_.getParam("trajName", trajectory_type_);
+  if (!shape_trajectory_mode_) {
+    nh_private_.param<int>("trajectory_type", trajectory_type_, 6);
+  }
+  shape_trajectory_mode_ = shape_trajectory_mode_ || trajectory_type_ != 0;
   nh_private_.param<int>("number_of_primitives", num_primitives_, 7);
   nh_private_.param<int>("reference_type", pubreference_type_, 2);
 
   inputs_.resize(num_primitives_);
 
-  if (trajectory_type_ == 0) {  // Polynomial Trajectory
+  if (!shape_trajectory_mode_) {  // Polynomial Trajectory
 
     if (num_primitives_ == 7) {
       inputs_.at(0) << 0.0, 0.0, 0.0;  // Constant jerk inputs for minimim time trajectories
@@ -115,10 +153,16 @@ trajectoryPublisher::trajectoryPublisher(const ros::NodeHandle& nh, const ros::N
   shape_axis_ << 0.0, 0.0, 1.0;
   motion_selector_ = 0;
   trajectory_started_ = false;
+  start_hold_started_ = false;
   start_time_ = ros::Time::now();
 
   initializePrimitives(trajectory_type_);
   updateTakeoffTarget();
+  setTakeoffReference();
+
+  dynamic_reconfigure::Server<trajectory_publisher::TrajectoryPublisherConfig>::CallbackType dyn_cb;
+  dyn_cb = boost::bind(&trajectoryPublisher::dynamicReconfigureCallback, this, _1, _2);
+  dyn_server_.setCallback(dyn_cb);
 }
 
 void trajectoryPublisher::updateReference() {
@@ -137,6 +181,7 @@ void trajectoryPublisher::updateReference() {
 
   if (current_state_.mode != "OFFBOARD") {
     trajectory_started_ = false;
+    start_hold_started_ = false;
     start_time_ = curr_time_;
     setTakeoffReference();
     return;
@@ -144,13 +189,27 @@ void trajectoryPublisher::updateReference() {
 
   if (!trajectory_started_) {
     if (!current_state_.armed || !takeoffTargetReached()) {
+      start_hold_started_ = false;
       setTakeoffReference();
       return;
     }
 
+    if (start_hold_duration_ > 0.0) {
+      if (!start_hold_started_) {
+        start_hold_begin_time_ = curr_time_;
+        start_hold_started_ = true;
+        ROS_INFO("Trajectory start point reached, holding for %.2f seconds.", start_hold_duration_);
+      }
+      if ((curr_time_ - start_hold_begin_time_).toSec() < start_hold_duration_) {
+        setTakeoffReference();
+        return;
+      }
+    }
+
     start_time_ = curr_time_;
     trajectory_started_ = true;
-    ROS_INFO("Takeoff reference reached, starting trajectory.");
+    start_hold_started_ = false;
+    ROS_INFO("Start hold complete, starting trajectory.");
   }
 
   trigger_time_ = (curr_time_ - start_time_).toSec();
@@ -162,14 +221,43 @@ void trajectoryPublisher::updateReference() {
 }
 
 void trajectoryPublisher::initializePrimitives(int type) {
-  if (type == 0) {
+  if (!shape_trajectory_mode_) {
     for (int i = 0; i < motionPrimitives_.size(); i++)
       motionPrimitives_.at(i)->generatePrimitives(p_mav_, v_mav_, inputs_.at(i));
   } else {
-    for (int i = 0; i < motionPrimitives_.size(); i++)
-      motionPrimitives_.at(i)->initPrimitives(shape_origin_, shape_axis_, shape_omega_);
+    for (int i = 0; i < motionPrimitives_.size(); i++) {
+      std::shared_ptr<shapetrajectory> shape = std::dynamic_pointer_cast<shapetrajectory>(motionPrimitives_.at(i));
+      if (shape) {
+        shape->setType(trajectory_type_);
+        shape->setBenchmarkParams(traj_intensity_, traj_base_duration_, helix_turns_, race_track_max_speed_);
+        shape->setTrajectorySpeed(trajectory_speed_);
+        const double omega = usesLegacyShapeOmega(trajectory_type_) ? shape_omega_ : trajectory_speed_ / 2.0;
+        shape->initPrimitives(shape_origin_, shape_axis_, omega);
+      }
+    }
     // TODO: Pass in parameters for primitive trajectories
   }
+}
+
+void trajectoryPublisher::applyShapeParams() {
+  for (int i = 0; i < motionPrimitives_.size(); i++) {
+    std::shared_ptr<shapetrajectory> shape = std::dynamic_pointer_cast<shapetrajectory>(motionPrimitives_.at(i));
+    if (shape) {
+      shape->setType(trajectory_type_);
+      shape->setBenchmarkParams(traj_intensity_, traj_base_duration_, helix_turns_, race_track_max_speed_);
+      shape->setTrajectorySpeed(trajectory_speed_);
+      const double omega = usesLegacyShapeOmega(trajectory_type_) ? shape_omega_ : trajectory_speed_ / 2.0;
+      shape->initPrimitives(shape_origin_, shape_axis_, omega);
+    }
+  }
+}
+
+void trajectoryPublisher::resetTrajectoryStart() {
+  updateTakeoffTarget();
+  trajectory_started_ = false;
+  start_hold_started_ = false;
+  start_time_ = ros::Time::now();
+  setTakeoffReference();
 }
 
 void trajectoryPublisher::updatePrimitives() {
@@ -177,7 +265,7 @@ void trajectoryPublisher::updatePrimitives() {
 }
 
 void trajectoryPublisher::updateTakeoffTarget() {
-  if (trajectory_type_ == 0) {
+  if (!shape_trajectory_mode_) {
     takeoff_target_ << init_pos_x_, init_pos_y_, init_pos_z_;
   } else {
     takeoff_target_ = motionPrimitives_.at(motion_selector_)->getPosition(0.0);
@@ -274,6 +362,7 @@ void trajectoryPublisher::pubrefSetpointRaw() {
   mavros_msgs::PositionTarget msg;
   msg.header.stamp = ros::Time::now();
   msg.header.frame_id = "map";
+  msg.coordinate_frame = mavros_msgs::PositionTarget::FRAME_LOCAL_NED;
   msg.type_mask = 0;
   msg.position.x = p_targ(0);
   msg.position.y = p_targ(1);
@@ -285,6 +374,21 @@ void trajectoryPublisher::pubrefSetpointRaw() {
   msg.acceleration_or_force.y = a_targ(1);
   msg.acceleration_or_force.z = a_targ(2);
   rawreferencePub_.publish(msg);
+}
+
+void trajectoryPublisher::pubrefPositionSetpoint() {
+  geometry_msgs::PoseStamped msg;
+
+  msg.header.stamp = ros::Time::now();
+  msg.header.frame_id = "map";
+  msg.pose.position.x = p_targ(0);
+  msg.pose.position.y = p_targ(1);
+  msg.pose.position.z = p_targ(2);
+  msg.pose.orientation.w = 1.0;
+  msg.pose.orientation.x = 0.0;
+  msg.pose.orientation.y = 0.0;
+  msg.pose.orientation.z = 0.0;
+  positionreferencePub_.publish(msg);
 }
 
 void trajectoryPublisher::pubrefSetpointRawGlobal() {
@@ -325,6 +429,9 @@ void trajectoryPublisher::refCallback(const ros::TimerEvent& event) {
       pubrefSetpointRaw();
       // pubrefSetpointRawGlobal();
       break;
+    case REF_POSITION:
+      pubrefPositionSetpoint();
+      break;
     default:
       pubflatrefState();
       break;
@@ -334,9 +441,7 @@ void trajectoryPublisher::refCallback(const ros::TimerEvent& event) {
 bool trajectoryPublisher::triggerCallback(std_srvs::SetBool::Request& req, std_srvs::SetBool::Response& res) {
   unsigned char mode = req.data;
 
-  updateTakeoffTarget();
-  trajectory_started_ = false;
-  start_time_ = ros::Time::now();
+  resetTrajectoryStart();
   res.success = true;
   res.message = "trajectory triggered";
   return true;
@@ -345,9 +450,7 @@ bool trajectoryPublisher::triggerCallback(std_srvs::SetBool::Request& req, std_s
 void trajectoryPublisher::motionselectorCallback(const std_msgs::Int32& selector_msg) {
   motion_selector_ = selector_msg.data;
   updatePrimitives();
-  updateTakeoffTarget();
-  trajectory_started_ = false;
-  start_time_ = ros::Time::now();
+  resetTrajectoryStart();
 }
 
 void trajectoryPublisher::mavposeCallback(const geometry_msgs::PoseStamped& msg) {
@@ -362,4 +465,35 @@ void trajectoryPublisher::mavtwistCallback(const geometry_msgs::TwistStamped& ms
   v_mav_(1) = msg.twist.linear.y;
   v_mav_(2) = msg.twist.linear.z;
   updatePrimitives();
+}
+
+void trajectoryPublisher::dynamicReconfigureCallback(trajectory_publisher::TrajectoryPublisherConfig& config,
+                                                     uint32_t level) {
+  const bool restart = trajectory_type_ != config.trajName ||
+                       traj_intensity_ != config.trajIntensity || traj_base_duration_ != config.Tend ||
+                       helix_turns_ != config.helixTurns || race_track_max_speed_ != config.raceTrackMaxSpeed ||
+                       trajectory_speed_ != config.trajectorySpeed ||
+                       trajectory_start_ramp_duration_ != config.trajectoryStartRampDuration ||
+                       takeoff_before_trajectory_ != config.waitStartBeforeTrajectory ||
+                       start_hold_duration_ != config.startHoldDuration;
+
+  trajectory_type_ = config.trajName;
+  shape_omega_ = config.shapeOmega;
+  traj_intensity_ = config.trajIntensity;
+  traj_base_duration_ = config.Tend;
+  helix_turns_ = config.helixTurns;
+  race_track_max_speed_ = config.raceTrackMaxSpeed;
+  trajectory_speed_ = config.trajectorySpeed;
+  trajectory_start_ramp_duration_ = config.trajectoryStartRampDuration;
+  takeoff_before_trajectory_ = config.waitStartBeforeTrajectory;
+  takeoff_position_tolerance_ = config.startPositionTolerance;
+  takeoff_velocity_tolerance_ = config.startVelocityTolerance;
+  start_hold_duration_ = config.startHoldDuration;
+
+  applyShapeParams();
+  if (restart) {
+    resetTrajectoryStart();
+    ROS_INFO("Trajectory reconfigured: trajName=%d speed=%.2f m/s trajIntensity=%.2f", trajectory_type_,
+             trajectory_speed_, traj_intensity_);
+  }
 }
