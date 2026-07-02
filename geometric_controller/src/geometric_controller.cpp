@@ -81,7 +81,7 @@ geometricCtrl::geometricCtrl(const ros::NodeHandle &nh, const ros::NodeHandle &n
   nh_private_.param<int>("ctrl_mode", ctrl_mode_, ERROR_QUATERNION);
   nh_private_.param<bool>("enable_sim", sim_enable_, true);
   nh_private_.param<bool>("velocity_yaw", velocity_yaw_, false);
-  nh_private_.param<double>("max_acc", max_fb_acc_, 9.0);
+  nh_private_.param<double>("max_acc", max_fb_acc_, 10.0);
   nh_private_.param<double>("yaw_heading", mavYaw_, 0.0);
 
   double dx, dy, dz;
@@ -90,16 +90,15 @@ geometricCtrl::geometricCtrl(const ros::NodeHandle &nh, const ros::NodeHandle &n
   nh_private_.param<double>("drag_dz", dz, 0.0);
   D_ << dx, dy, dz;
 
-  double attctrl_tau;
-  nh_private_.param<double>("attctrl_constant", attctrl_tau, 0.1);
-  nh_private_.param<double>("normalizedthrust_constant", norm_thrust_const_, 0.05);  // 1 / max acceleration
+  nh_private_.param<double>("attctrl_constant", attctrl_tau_, 0.3);
+  nh_private_.param<double>("normalizedthrust_constant", norm_thrust_const_, 0.06);  // 1 / max acceleration
   nh_private_.param<double>("normalizedthrust_offset", norm_thrust_offset_, 0.1);    // 1 / max acceleration
-  nh_private_.param<double>("Kp_x", Kpos_x_, 8.0);
-  nh_private_.param<double>("Kp_y", Kpos_y_, 8.0);
-  nh_private_.param<double>("Kp_z", Kpos_z_, 10.0);
-  nh_private_.param<double>("Kv_x", Kvel_x_, 1.5);
-  nh_private_.param<double>("Kv_y", Kvel_y_, 1.5);
-  nh_private_.param<double>("Kv_z", Kvel_z_, 3.3);
+  nh_private_.param<double>("Kp_x", Kpos_x_, 10.0);
+  nh_private_.param<double>("Kp_y", Kpos_y_, 10.0);
+  nh_private_.param<double>("Kp_z", Kpos_z_, 20.0);
+  nh_private_.param<double>("Kv_x", Kvel_x_, 5.0);
+  nh_private_.param<double>("Kv_y", Kvel_y_, 5.0);
+  nh_private_.param<double>("Kv_z", Kvel_z_, 10.0);
   nh_private_.param<int>("posehistory_window", posehistory_window_, 200);
   nh_private_.param<double>("init_pos_x", initTargetPos_x_, 0.0);
   nh_private_.param<double>("init_pos_y", initTargetPos_y_, 0.0);
@@ -115,9 +114,9 @@ geometricCtrl::geometricCtrl(const ros::NodeHandle &nh, const ros::NodeHandle &n
   bool jerk_enabled = false;
   if (!jerk_enabled) {
     if (ctrl_mode_ == ERROR_GEOMETRIC) {
-      controller_ = std::make_shared<NonlinearGeometricControl>(attctrl_tau);
+      controller_ = std::make_shared<NonlinearGeometricControl>(attctrl_tau_);
     } else {
-      controller_ = std::make_shared<NonlinearAttitudeControl>(attctrl_tau);
+      controller_ = std::make_shared<NonlinearAttitudeControl>(attctrl_tau_);
     }
   } else {
     controller_ = std::make_shared<JerkTrackingControl>();
@@ -450,22 +449,41 @@ void geometricCtrl::dynamicReconfigureCallback(geometric_controller::GeometricCo
   if (max_fb_acc_ != config.max_acc) {
     max_fb_acc_ = config.max_acc;
     ROS_INFO("Reconfigure request : max_acc = %.2f ", config.max_acc);
-  } else if (Kpos_x_ != config.Kp_x) {
+  }
+  if (attctrl_tau_ != config.attctrl_constant) {
+    attctrl_tau_ = config.attctrl_constant;
+    controller_->setAttitudeControlTimeConstant(attctrl_tau_);
+    ROS_INFO("Reconfigure request : attctrl_constant = %.2f ", config.attctrl_constant);
+  }
+  if (norm_thrust_const_ != config.normalizedthrust_constant) {
+    norm_thrust_const_ = config.normalizedthrust_constant;
+    ROS_INFO("Reconfigure request : normalizedthrust_constant = %.2f ", config.normalizedthrust_constant);
+  }
+  if (norm_thrust_offset_ != config.normalizedthrust_offset) {
+    norm_thrust_offset_ = config.normalizedthrust_offset;
+    ROS_INFO("Reconfigure request : normalizedthrust_offset = %.2f ", config.normalizedthrust_offset);
+  }
+  if (Kpos_x_ != config.Kp_x) {
     Kpos_x_ = config.Kp_x;
     ROS_INFO("Reconfigure request : Kp_x  = %.2f  ", config.Kp_x);
-  } else if (Kpos_y_ != config.Kp_y) {
+  }
+  if (Kpos_y_ != config.Kp_y) {
     Kpos_y_ = config.Kp_y;
     ROS_INFO("Reconfigure request : Kp_y  = %.2f  ", config.Kp_y);
-  } else if (Kpos_z_ != config.Kp_z) {
+  }
+  if (Kpos_z_ != config.Kp_z) {
     Kpos_z_ = config.Kp_z;
     ROS_INFO("Reconfigure request : Kp_z  = %.2f  ", config.Kp_z);
-  } else if (Kvel_x_ != config.Kv_x) {
+  }
+  if (Kvel_x_ != config.Kv_x) {
     Kvel_x_ = config.Kv_x;
     ROS_INFO("Reconfigure request : Kv_x  = %.2f  ", config.Kv_x);
-  } else if (Kvel_y_ != config.Kv_y) {
+  }
+  if (Kvel_y_ != config.Kv_y) {
     Kvel_y_ = config.Kv_y;
     ROS_INFO("Reconfigure request : Kv_y =%.2f  ", config.Kv_y);
-  } else if (Kvel_z_ != config.Kv_z) {
+  }
+  if (Kvel_z_ != config.Kv_z) {
     Kvel_z_ = config.Kv_z;
     ROS_INFO("Reconfigure request : Kv_z  = %.2f  ", config.Kv_z);
   }

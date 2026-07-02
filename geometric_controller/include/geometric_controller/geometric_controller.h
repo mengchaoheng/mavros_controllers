@@ -123,6 +123,7 @@ class geometricCtrl {
   bool velocity_yaw_;
   double kp_rot_, kd_rot_;
   double reference_request_dt_;
+  double attctrl_tau_;
   double norm_thrust_const_, norm_thrust_offset_;
   double max_fb_acc_;
 

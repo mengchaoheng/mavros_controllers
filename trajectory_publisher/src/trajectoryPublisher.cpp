@@ -38,6 +38,8 @@
 
 #include "trajectory_publisher/trajectoryPublisher.h"
 
+#include <algorithm>
+
 using namespace std;
 using namespace Eigen;
 trajectoryPublisher::trajectoryPublisher(const ros::NodeHandle& nh, const ros::NodeHandle& nh_private)
@@ -69,6 +71,10 @@ trajectoryPublisher::trajectoryPublisher(const ros::NodeHandle& nh, const ros::N
   nh_private_.param<double>("horizon", primitive_duration_, 1.0);
   nh_private_.param<double>("maxjerk", max_jerk_, 10.0);
   nh_private_.param<double>("shape_omega", shape_omega_, 1.5);
+  nh_private_.param<bool>("takeoff_before_trajectory", takeoff_before_trajectory_, true);
+  nh_private_.param<double>("takeoff_position_tolerance", takeoff_position_tolerance_, 0.25);
+  nh_private_.param<double>("takeoff_velocity_tolerance", takeoff_velocity_tolerance_, 0.5);
+  nh_private_.param<double>("trajectory_start_ramp_duration", trajectory_start_ramp_duration_, 2.0);
   nh_private_.param<int>("trajectory_type", trajectory_type_, 0);
   nh_private_.param<int>("number_of_primitives", num_primitives_, 7);
   nh_private_.param<int>("reference_type", pubreference_type_, 2);
@@ -102,23 +108,57 @@ trajectoryPublisher::trajectoryPublisher(const ros::NodeHandle& nh, const ros::N
 
   p_targ << init_pos_x_, init_pos_y_, init_pos_z_;
   v_targ << 0.0, 0.0, 0.0;
+  a_targ << 0.0, 0.0, 0.0;
+  p_mav_ << init_pos_x_, init_pos_y_, 0.0;
+  v_mav_ << 0.0, 0.0, 0.0;
   shape_origin_ << init_pos_x_, init_pos_y_, init_pos_z_;
   shape_axis_ << 0.0, 0.0, 1.0;
   motion_selector_ = 0;
+  trajectory_started_ = false;
+  start_time_ = ros::Time::now();
 
   initializePrimitives(trajectory_type_);
+  updateTakeoffTarget();
 }
 
 void trajectoryPublisher::updateReference() {
   curr_time_ = ros::Time::now();
-  if (current_state_.mode != "OFFBOARD") {  /// Reset start_time_ when not in offboard
-    start_time_ = ros::Time::now();
+  if (!takeoff_before_trajectory_) {
+    if (current_state_.mode != "OFFBOARD") {  /// Reset start_time_ when not in offboard
+      start_time_ = ros::Time::now();
+    }
+    trigger_time_ = (curr_time_ - start_time_).toSec();
+
+    p_targ = motionPrimitives_.at(motion_selector_)->getPosition(trigger_time_);
+    v_targ = motionPrimitives_.at(motion_selector_)->getVelocity(trigger_time_);
+    if (pubreference_type_ != 0) a_targ = motionPrimitives_.at(motion_selector_)->getAcceleration(trigger_time_);
+    return;
   }
+
+  if (current_state_.mode != "OFFBOARD") {
+    trajectory_started_ = false;
+    start_time_ = curr_time_;
+    setTakeoffReference();
+    return;
+  }
+
+  if (!trajectory_started_) {
+    if (!current_state_.armed || !takeoffTargetReached()) {
+      setTakeoffReference();
+      return;
+    }
+
+    start_time_ = curr_time_;
+    trajectory_started_ = true;
+    ROS_INFO("Takeoff reference reached, starting trajectory.");
+  }
+
   trigger_time_ = (curr_time_ - start_time_).toSec();
 
   p_targ = motionPrimitives_.at(motion_selector_)->getPosition(trigger_time_);
   v_targ = motionPrimitives_.at(motion_selector_)->getVelocity(trigger_time_);
   if (pubreference_type_ != 0) a_targ = motionPrimitives_.at(motion_selector_)->getAcceleration(trigger_time_);
+  applyTrajectoryStartRamp(trigger_time_);
 }
 
 void trajectoryPublisher::initializePrimitives(int type) {
@@ -134,6 +174,51 @@ void trajectoryPublisher::initializePrimitives(int type) {
 
 void trajectoryPublisher::updatePrimitives() {
   for (int i = 0; i < motionPrimitives_.size(); i++) motionPrimitives_.at(i)->generatePrimitives(p_mav_, v_mav_);
+}
+
+void trajectoryPublisher::updateTakeoffTarget() {
+  if (trajectory_type_ == 0) {
+    takeoff_target_ << init_pos_x_, init_pos_y_, init_pos_z_;
+  } else {
+    takeoff_target_ = motionPrimitives_.at(motion_selector_)->getPosition(0.0);
+  }
+}
+
+void trajectoryPublisher::setTakeoffReference() {
+  p_targ = takeoff_target_;
+  v_targ << 0.0, 0.0, 0.0;
+  a_targ << 0.0, 0.0, 0.0;
+}
+
+bool trajectoryPublisher::takeoffTargetReached() {
+  return (p_mav_ - takeoff_target_).norm() < takeoff_position_tolerance_ &&
+         v_mav_.norm() < takeoff_velocity_tolerance_;
+}
+
+void trajectoryPublisher::applyTrajectoryStartRamp(double trajectory_time) {
+  if (trajectory_start_ramp_duration_ <= 0.0 || trajectory_time >= trajectory_start_ramp_duration_) {
+    return;
+  }
+
+  const double x = std::max(0.0, std::min(1.0, trajectory_time / trajectory_start_ramp_duration_));
+  const double x2 = x * x;
+  const double x3 = x2 * x;
+  const double x4 = x3 * x;
+  const double x5 = x4 * x;
+  const double scale = 10.0 * x3 - 15.0 * x4 + 6.0 * x5;
+  const double scale_dot = (30.0 * x2 - 60.0 * x3 + 30.0 * x4) / trajectory_start_ramp_duration_;
+  const double scale_ddot =
+      (60.0 * x - 180.0 * x2 + 120.0 * x3) /
+      (trajectory_start_ramp_duration_ * trajectory_start_ramp_duration_);
+
+  const Eigen::Vector3d p_nom = p_targ;
+  const Eigen::Vector3d v_nom = v_targ;
+  const Eigen::Vector3d a_nom = a_targ;
+  const Eigen::Vector3d dp = p_nom - takeoff_target_;
+
+  p_targ = takeoff_target_ + scale * dp;
+  v_targ = scale * v_nom + scale_dot * dp;
+  a_targ = scale * a_nom + 2.0 * scale_dot * v_nom + scale_ddot * dp;
 }
 
 void trajectoryPublisher::pubrefTrajectory(int selector) {
@@ -249,14 +334,19 @@ void trajectoryPublisher::refCallback(const ros::TimerEvent& event) {
 bool trajectoryPublisher::triggerCallback(std_srvs::SetBool::Request& req, std_srvs::SetBool::Response& res) {
   unsigned char mode = req.data;
 
+  updateTakeoffTarget();
+  trajectory_started_ = false;
   start_time_ = ros::Time::now();
   res.success = true;
   res.message = "trajectory triggered";
+  return true;
 }
 
 void trajectoryPublisher::motionselectorCallback(const std_msgs::Int32& selector_msg) {
   motion_selector_ = selector_msg.data;
   updatePrimitives();
+  updateTakeoffTarget();
+  trajectory_started_ = false;
   start_time_ = ros::Time::now();
 }
 

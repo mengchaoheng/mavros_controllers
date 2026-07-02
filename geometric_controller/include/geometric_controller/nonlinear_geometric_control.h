@@ -50,6 +50,7 @@ class NonlinearGeometricControl : public Control {
   virtual ~NonlinearGeometricControl();
   void Update(Eigen::Vector4d &curr_att, const Eigen::Vector4d &ref_att, const Eigen::Vector3d &ref_acc,
               const Eigen::Vector3d &ref_jerk) override;
+  void setAttitudeControlTimeConstant(double attctrl_tau) override { attctrl_tau_ = attctrl_tau; }
 
  private:
   double attctrl_tau_{1.0};

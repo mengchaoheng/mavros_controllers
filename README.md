@@ -28,11 +28,12 @@ DONT_RUN=1 make px4_sitl_default gazebo
 To source the PX4 environment, run the following commands
 
 ```bash
-cd <Firmware_directory>
-source ~/catkin_ws/devel/setup.bash    # (optional)
-source Tools/setup_gazebo.bash $(pwd) $(pwd)/build/px4_sitl_default
+cd ~/PX4-Autopilot
+source ~/mavros_ws/devel/setup.bash
+source Tools/simulation/gazebo-classic/setup_gazebo.bash $(pwd) $(pwd)/build/px4_sitl_default
 export ROS_PACKAGE_PATH=$ROS_PACKAGE_PATH:$(pwd)
-export ROS_PACKAGE_PATH=$ROS_PACKAGE_PATH:$(pwd)/Tools/sitl_gazebo
+export ROS_PACKAGE_PATH=$ROS_PACKAGE_PATH:$(pwd)/Tools/simulation/gazebo-classic/sitl_gazebo-classic
+roslaunch px4 posix_sitl.launch
 ```
 
 You can run the rest of the roslaunch files in the same terminal
@@ -50,18 +51,18 @@ Create a catkin workspace:
 This folder will probably be already created since the previous process would have created it. If it is not present, do:
 
 ```bash
-mkdir -p ~/catkin_ws/src
-cd ~/catkin_ws
+mkdir -p ~/mavros_ws/src
+cd ~/mavros_ws
 catkin init
 catkin config --merge-devel
-cd ~/catkin_ws/src
+cd ~/mavros_ws/src
 wstool init
 ```
 
 ###### Clone this repository
 
 ```bash
-cd ~/catkin_ws/src
+cd ~/mavros_ws/src
 git clone https://github.com/Jaeyoung-Lim/mavros_controllers
 ```
 
@@ -72,12 +73,12 @@ Now continue either with wstool to automatically download dependencies or downlo
 wstool automates the installation of dependencies and updates all packages. If you have no problem updating the packages required by mavros_controllers and/or any other packages, follow this procedure. If not, follow the next 'Manually Download dependencies and build' section.
 
 ```bash
-cd ~/catkin_ws
+cd ~/mavros_ws
 wstool merge -t src src/mavros_controllers/dependencies.rosinstall
 wstool update -t src -j4
 rosdep install --from-paths src --ignore-src -y --rosdistro $ROS_DISTRO
 catkin build
-source ~/catkin_ws/devel/setup.bash
+source ~/mavros_ws/devel/setup.bash
 ```
 
 
@@ -91,7 +92,7 @@ If you did not install with wstool, you need to manually download the dependenci
 Do:
 
 ```bash
-cd ~/catkin_ws/src
+cd ~/mavros_ws/src
 git clone https://github.com/catkin/catkin_simple
 git clone https://github.com/ethz-asl/eigen_catkin
 git clone https://github.com/ethz-asl/mav_comm
@@ -100,16 +101,16 @@ git clone https://github.com/ethz-asl/mav_comm
 Build all the packages:
 
 ```bash
-cd ~/catkin_ws
+cd ~/mavros_ws
 catkin build
-source ~/catkin_ws/devel/setup.bash
+source ~/mavros_ws/devel/setup.bash
 ```
 
 ## Running the code
 Remember to source the workspace `setup.bash` before sourcing the PX4 environment.
 ```bash
 cd <Firmware_directory>
-source ~/catkin_ws/devel/setup.bash    # (necessary)
+source ~/mavros_ws/devel/setup.bash    # (necessary)
 source Tools/setup_gazebo.bash $(pwd) $(pwd)/build/px4_sitl_default
 export ROS_PACKAGE_PATH=$ROS_PACKAGE_PATH:$(pwd)
 export ROS_PACKAGE_PATH=$ROS_PACKAGE_PATH:$(pwd)/Tools/sitl_gazebo
@@ -204,12 +205,12 @@ In case you use this work as an academic context, please cite as the following.
  This should not have happened if you clone the catkin_simple and eigen_catkin repositories. Try again:
 
 ```bash
-cd ~/catkin_ws/src
+cd ~/mavros_ws/src
 git clone https://github.com/catkin/catkin_simple
 git clone https://github.com/ethz-asl/eigen_catkin
-cd ~/catkin_ws
+cd ~/mavros_ws
 catkin build mavros_controllers
-source ~/catkin_ws/devel/setup.bash
+source ~/mavros_ws/devel/setup.bash
 ```
 
 - Refer to [this issue](https://github.com/Jaeyoung-Lim/mavros_controllers/issues/61).
