@@ -55,7 +55,7 @@ par.axis = [0; 0; -1];
 par.spin = [1; 1; -1; -1];
 
 par.dt = 1/500;         % Base simulation/hold tick; 100 Hz and 250 Hz divide exactly.
-par.Tend = 30.0;
+par.Tend = 20.0;
 par.integratorName = "ode45";  % "ode45" or "lie_rk4"
 par.control.outerPeriod = 0.01;  % 100 Hz MPC solve refresh.
 par.control.innerPeriod = 1/250; % 250 Hz non-MPC/INDI/direct-control refresh.
@@ -64,23 +64,6 @@ par.control.innerPeriod = 1/250; % 250 Hz non-MPC/INDI/direct-control refresh.
 par.indi.innerLoopFilterCutoffHz = 30;
 par.indi.outerLoopFilterCutoffHz = 30;
 
-% Reference progress scaling.
-% Every benchmark trajectory is defined first as a geometric/base curve
-%   r0(s), psi0(s), 0 <= s <= T0,
-% then time-reparameterized by s=s(t). The default speed_linear mode uses
-%   lambda(t) = ds/dt = lambda0 + alpha*t,
-%   alpha = (lambda1-lambda0)/T,
-%   s(t) = lambda0*t + 0.5*alpha*t^2,
-%   T = 2*T0/(lambda0+lambda1),
-% so the progress speed grows linearly from lambda0 to lambda1 while exactly
-% finishing the base curve at t=T. speed_fixed uses lambda(t)=lambda_c and
-% T=T0/lambda_c. All reference derivatives below are recomputed by the chain
-% rule, not by finite differences.
-par.progress.mode = "speed_fixed";   % "speed_linear" or "speed_fixed"
-par.progress.speedRange = [0, 3.2];   % speed_linear: start/end ds/dt multiplier
-par.progress.speed = 0.5;               % speed_fixed: constant ds/dt multiplier
-% For race_track_c, par.raceTrackMaxSpeed sets the physical target speed.
-
 % Available choices:
 %   "figure8_horizontal"
 %   "figure8_vertical"
@@ -88,21 +71,80 @@ par.progress.speed = 0.5;               % speed_fixed: constant ds/dt multiplier
 %   "helix_flip_y"
 %   "flip_loop_sine"
 %   "fast_circle"
-%   "race_track_c"
 par.trajName = "figure8_horizontal";
 
-% One knob for dynamic aggressiveness. The factory converts physical scales
-% into periods using m, Tmax, and the final progress speed.
-par.trajIntensity = 1;  % 0 = gentle, 1 = near the actuator envelope
-par.helixTurns = 5;     % geometric turns; par.progress controls timing
-par.raceTrackMaxSpeed = 19.4; % [m/s], Sun Table VI Race Track C Vmax
+% Analytic trajectory parameters. All trajectories use the same phase variable:
+%   theta(t) = theta0 + integral Omega(t) dt
+% and then place standard sin/cos components on selected axes.
+% Modes:
+%   "fixed"     : omega(t)=omega
+%   "linear"    : omega(t) interpolates linearly from omegaRange(1) to (2)
+%   "quadratic" : omega(t) interpolates quadratically over the same range
+par.traj.omega.mode = "quadratic";
+
+% Horizontal figure-eight:
+%   x = Ax*sin(theta), y = Ay*sin(2*theta), z = -Hc
+par.traj.figure8_horizontal.Ax = 2.0;
+par.traj.figure8_horizontal.Ay = 2.0;
+par.traj.figure8_horizontal.Hc = 3.0;
+par.traj.figure8_horizontal.theta0 = 0;
+par.traj.figure8_horizontal.omega.value = 1;        % fixed angular frequency [rad/s]
+par.traj.figure8_horizontal.omega.range = [0.5, 1.5];   % start/end angular frequency [rad/s]
+
+% Vertical figure-eight:
+%   x = 0, y = Ay*sin(theta), z = -Hc - Az*sin(2*theta)
+par.traj.figure8_vertical.Ay = 2.0;
+par.traj.figure8_vertical.Az = 2.0;
+par.traj.figure8_vertical.Hc = 3.0;
+par.traj.figure8_vertical.theta0 = -pi/4;
+par.traj.figure8_vertical.omega.value = 1;        % fixed angular frequency [rad/s]
+par.traj.figure8_vertical.omega.range = [0.5, 1.5];   % start/end angular frequency [rad/s]
+
+% X-forward helix/flip loop:
+%   x = Vx*t, y = Ay*sin(theta), z = -Hc + Az*cos(theta)
+par.traj.helix_flip.Ay = 2.0;
+par.traj.helix_flip.Az = 2.0;
+par.traj.helix_flip.Hc = 3.0;
+par.traj.helix_flip.Vx = 0.30;
+par.traj.helix_flip.theta0 = 0;
+par.traj.helix_flip.omega.value = 3.8;        % fixed angular frequency [rad/s]
+par.traj.helix_flip.omega.range = [2, 4];   % start/end angular frequency [rad/s]
+
+% Y-forward helix/flip loop:
+%   x = Ax*sin(theta), y = Vy*t, z = -Hc + Az*cos(theta)
+par.traj.helix_flip_y.Ax = 2.0;
+par.traj.helix_flip_y.Az = 2.0;
+par.traj.helix_flip_y.Hc = 3.0;
+par.traj.helix_flip_y.Vy = 0.30;
+par.traj.helix_flip_y.theta0 = 0;
+par.traj.helix_flip_y.omega.value = 3.8;        % fixed angular frequency [rad/s]
+par.traj.helix_flip_y.omega.range = [2, 4];   % start/end angular frequency [rad/s]
+
+% Pure vertical flip loop:
+%   x = Vx*t, y = Ay*sin(theta), z = -Hc + Az*cos(theta), with Vx=0
+par.traj.flip_loop_sine.Ay = 2.0;
+par.traj.flip_loop_sine.Az = 2.0;
+par.traj.flip_loop_sine.Hc = 3.0;
+par.traj.flip_loop_sine.Vx = 0.0;
+par.traj.flip_loop_sine.theta0 = 0;
+par.traj.flip_loop_sine.omega.value = 3.8;        % fixed angular frequency [rad/s]
+par.traj.flip_loop_sine.omega.range = [2, 4];   % start/end angular frequency [rad/s]
+
+% Horizontal circle/ellipse:
+%   x = Ax*cos(theta), y = Ay*sin(theta), z = -Hc
+par.traj.fast_circle.Ax = 3.0;
+par.traj.fast_circle.Ay = 3.0;
+par.traj.fast_circle.Hc = 3.0;
+par.traj.fast_circle.theta0 = 0;
+par.traj.fast_circle.omega.value = 3.4;        % fixed angular frequency [rad/s]
+par.traj.fast_circle.omega.range = [1.5, 3.5];   % start/end angular frequency [rad/s]
 
 % controller
 % "geometric", "lee", "johnson", "px4_iris"
 % "sun_dfbc", "sun_dfbc_indi"
 % "lu", "sun_nmpc", "sun_nmpc_indi"
 % "tal", "geometric_indi"
-par.controllerName = "px4_iris";
+par.controllerName = "johnson";
 % Shared acceleration-level gains, using Sun et al. Table I DFBC values as
 % the benchmark default. Kp/Kv command linear acceleration; KR/KOmega
 % command angular acceleration. Controllers that output force/moment convert
@@ -158,29 +200,44 @@ par.aero.kh = 0.01;
 % PX4 Iris controller: position -> attitude -> rate -> allocation.
 % gainSource="benchmark_equivalent" maps the shared benchmark gains
 % Kp/Kv/KR/KOmega into PX4's cascaded normalized-torque controller:
-%   benchmark: a_fb = Kp*e_p + Kv*e_v
+% 一方面是串级，另一方面是% normalize allocation: D*[T;tau]=D*B*U*u_norm,  B*U = B_px4,
+% D*B*U = B_norm，D=f(B*U)的计算参考px4_normalize_B，并且可以分为两部分D_T，D_tau
+% 控制器输出都是加速度/角加速度量纲：
+%   benchmark: a_fb = (Kp*e_p + Kv*e_v) 
 %   PX4:       v_sp = v_ref + K_pos*e_p
-%              a_fb = K_vel*(v_sp-v)
-%   match:     K_pos = diag(Kp)./diag(Kv), K_vel = diag(Kv).
+%              a_sp = K_vel*(v_sp-v) = K_vel*K_pos*e_p + K_vel*e_v
+% 单看力，T=m*a，并且在px4中：
+% T_c = a_sp * h/g = a_sp * m/4T_max, h=m*g/4T_max.  
+% T_c 是px4的位置控制的输出，然后使用B_norm经过单位化分配后得到u_norm, 
+% 事实上 D_T = 1/4T_max, T_sp = m*a_sp
+% T_c=T_sp/4T_max是一个力单位化过程。加速度控制部分显式计算了控制器输出的单位化（使用h/g）。
+% => K_vel = diag(Kv) , 
+%   match: K_pos = diag(Kp)./diag(Kv)
+%          K_vel = diag(Kv)
+
 % For attitude/rate feedback:
-%   benchmark: tau_fb = J*(KR*e_R + KOmega*(Omega_ref-Omega))
+%   benchmark: OmegaDot_fb = KR*e_R + KOmega*(Omega_ref-Omega)
 %   PX4:       Omega_sp = K_att*e_R + Omega_ff
-%              tau_fb = S_tau*K_rate*(Omega_sp-Omega)
+%              tau_sp = K_rate*(Omega_sp-Omega)
+% 单看力矩, 在px4中与加速度不同，角加速度控制部分则直接认为已经单位化然后单位化控制分配：
+% tau_sp =  B_norm*u_norm 
+% 因此 tau_sp = D_tau*J*OmegaDot_fb
 %   match:     K_att = diag(KR)./diag(KOmega),
-%              K_rate = diag(S_tau)\diag(J*KOmega).
+%              K_rate = D_tau*J*diag(KOmega).
 par.px4_iris.hoverThrust = 0.216;
-par.px4_iris.gainSource = "manual"; % "benchmark_equivalent" or "manual"
-par.px4_iris.posP = [1; 1; 1];
-par.px4_iris.velP = [2.0; 2.0; 2.0];
+par.px4_iris.gainSource = "benchmark_equivalent"; % "benchmark_equivalent" or "manual"
+par.px4_iris.posP = [10/6; 10/6; 10/6];
+par.px4_iris.velP = [6.0; 6.0; 6.0];
 par.px4_iris.velI = zeros(3,1);
 par.px4_iris.velD = zeros(3,1);
 par.px4_iris.yawWeight = 1.0;
-par.px4_iris.attP = [3; 3; 2];
+par.px4_iris.attP = [7.5; 7.5; 0.375];
 par.px4_iris.rateLimit = inf(3,1);
-par.px4_iris.rateP = [0.03; 0.03; 0.05];
+par.px4_iris.rateP = [0.01599789; 0.01343823; 0.06753230]; % 实际中和不同仿真略有差异。因为有执行器的影响
 par.px4_iris.rateI = zeros(3,1);
 par.px4_iris.rateD = [0.0; 0.0; 0.0];
 par.px4_iris.rateFF = [0.0; 0.0; 0.0];
+par.px4_iris.rateIntLimit = inf(3,1);
 par.px4_iris.rateIntLimit = inf(3,1);
 par.px4_iris.useAccelerationFeedforward = true;
 par.px4_iris.useYawRateFeedforward = true;
@@ -228,7 +285,7 @@ par.lu.rateIntLimit = inf(3,1);
 %                = mu' * Wmu * mu,  Wmu = G^{-T}*Win*G^{-1}.
 % Lu has no Omega state in its MPC, so its Omega input penalty uses the
 % shared body-rate weight.
-[B, ~, ~] = irisAllocationMatrices(par);
+[B, ~, ~, ~] = irisAllocationMatrices(par);
 G = [-B(1,:); B(2:4,:)];
 Win = par.mpc.Qu;
 Ginv = G\eye(4);
@@ -550,266 +607,274 @@ end
 function traj = makeTrajectory(par)
 
     shape = trajectoryShape(par);
+    traj.name = string(par.trajName);
+    traj.Tend = par.Tend;
 
     switch par.trajName
 
         case "figure8_horizontal"
-            traj.name = "figure8_horizontal";
-            traj.Tend = par.Tend;
             cfg = makeFigure8HorizontalParams(shape);
-            traj.eval = @(t) evalFigure8Horizontal(t, cfg);
+            traj.eval = @(t) evalFigure8Horizontal(t, cfg, false);
+            traj.evalPredict = @(t) evalFigure8Horizontal(t, cfg, true);
 
         case "figure8_vertical"
-            traj.name = "figure8_vertical";
-            traj.Tend = par.Tend;
             cfg = makeFigure8VerticalParams(shape);
-            traj.eval = @(t) evalFigure8Vertical(t, cfg);
+            traj.eval = @(t) evalFigure8Vertical(t, cfg, false);
+            traj.evalPredict = @(t) evalFigure8Vertical(t, cfg, true);
 
         case "helix_flip"
-            traj.name = "helix_flip";
-            traj.Tend = par.Tend;
             cfg = makeHelixFlipParams(shape);
-            traj.eval = @(t) evalHelixFlip(t, cfg);
+            traj.eval = @(t) evalHelixFlip(t, cfg, false);
+            traj.evalPredict = @(t) evalHelixFlip(t, cfg, true);
 
         case "helix_flip_y"
-            traj.name = "helix_flip_y";
-            traj.Tend = par.Tend;
-            cfg = makeHelixFlipParams(shape);
-            traj.eval = @(t) evalHelixFlipY(t, cfg);
+            cfg = makeHelixFlipYParams(shape);
+            traj.eval = @(t) evalHelixFlipY(t, cfg, false);
+            traj.evalPredict = @(t) evalHelixFlipY(t, cfg, true);
 
         case "flip_loop_sine"
-            traj.name = "flip_loop_sine";
-            traj.Tend = par.Tend;
             cfg = makeHelixFlipParams(shape);
-            traj.eval = @(t) evalFlipLoop(t, cfg);
+            traj.eval = @(t) evalFlipLoop(t, cfg, false);
+            traj.evalPredict = @(t) evalFlipLoop(t, cfg, true);
 
         case "fast_circle"
-            traj.name = "fast_circle";
-            traj.Tend = par.Tend;
             cfg = makeFastCircleParams(shape);
-            traj.eval = @(t) evalFastCircle(t, cfg);
-
-        case "race_track_c"
-            traj.name = "race_track_c";
-            cfg = makeRaceTrackCParams(shape);
-            traj.Tend = cfg.Ttrack;
-            traj.eval = @(t) evalRaceTrackC(t, cfg);
+            traj.eval = @(t) evalFastCircle(t, cfg, false);
+            traj.evalPredict = @(t) evalFastCircle(t, cfg, true);
 
         otherwise
             error("Unknown trajectory name.");
     end
 
-    traj = applyTrajectoryProgress(traj, par);
+    traj.name = trajectoryNameWithOmega(traj.name, cfg.omega);
 end
 
-function traj = applyTrajectoryProgress(traj, par)
+function name = trajectoryNameWithOmega(name, omega)
 
-    baseEval = traj.eval;
-    baseTend = traj.Tend;
+    switch omega.mode
+        case "fixed"
+            name = name + "_omegaFixed_" + string(omega.value);
+        case {"linear", "quadratic"}
+            name = name + "_omega" + upperFirst(omega.mode) ...
+                + "_" + string(omega.range(1)) + "_" + string(omega.range(2));
+    end
+end
 
-    switch par.progress.mode
-        case "speed_fixed"
-            speed = par.progress.speed;
+function text = upperFirst(text)
 
-            if speed <= 0
-                error("Trajectory speed multiplier must be positive.");
-            end
+    text = string(text);
+    text = upper(extractBefore(text, 2)) + extractAfter(text, 1);
+end
 
-            traj.Tend = speedFixedDuration(baseTend, speed);
-            traj.name = traj.name + "_speedFixed_" + string(speed);
-            traj.eval = @(t) evalSpeedFixedTrajectory( ...
-                baseEval, baseTend, t, traj.Tend, speed);
-            traj.evalPredict = @(t) evalSpeedFixedTrajectory( ...
-                baseEval, baseTend, t, traj.Tend, speed, true);
+function omega = resolveTrajectoryOmega(shape)
 
-        case "speed_linear"
-            speedRange = par.progress.speedRange;
+    raw = shape.omega;
+    omegaName = shape.paramName + ".omega";
+    mode = lower(string(getStructField(raw, 'mode', "fixed")));
 
-            if any(speedRange < 0) || sum(speedRange) <= 0
-                error("Trajectory speed multiplier must be nonnegative and not both zero.");
-            end
+    switch mode
+        case {"fixed", "omega_fixed"}
+            value = double(getStructField(raw, 'value', 1));
+            validateOmegaValues(value, omegaName + ".value");
+            omega.mode = "fixed";
+            omega.value = value;
+            omega.range = [value, value];
 
-            traj.Tend = speedLinearDuration(baseTend, speedRange);
-            traj.name = traj.name + "_speedLinear_" + string(speedRange(1)) ...
-                      + "_" + string(speedRange(2));
-            traj.eval = @(t) evalSpeedLinearTrajectory( ...
-                baseEval, baseTend, t, traj.Tend, speedRange);
-            traj.evalPredict = @(t) evalSpeedLinearTrajectory( ...
-                baseEval, baseTend, t, traj.Tend, speedRange, true);
+        case {"linear", "omega_linear", "quadratic", "omega_quadratic"}
+            mode = erase(mode, "omega_");
+            range = vectorNParam(getStructField(raw, 'range', [1, 1]), 2, ...
+                omegaName + ".range");
+            validateOmegaValues(range, omegaName + ".range");
+            omega.mode = mode;
+            omega.value = range(2);
+            omega.range = range(:).';
 
         otherwise
-            error("Unknown progress mode.");
+            error('Unknown %s.mode "%s".', omegaName, mode);
+    end
+
+    if ~isempty(fieldnames(shape.legacyProgress))
+        omega = omegaFromLegacyProgress(shape.legacyProgress, omega);
+        return;
     end
 end
 
-function simTend = speedFixedDuration(baseTend, speed)
+function omega = omegaFromLegacyProgress(progress, baseOmega)
 
-    simTend = baseTend/speed;
+    mode = lower(string(getStructField(progress, 'mode', "speed_fixed")));
+    baseRange = baseOmega.range(:).';
+    baseTerminal = max(baseOmega.value, eps);
+
+    switch mode
+        case {"speed_fixed", "scale_fixed"}
+            scale = double(getStructField(progress, 'speed', ...
+                getStructField(progress, 'scale', 1)));
+            value = scale*baseTerminal;
+            validateOmegaValues(value, 'par.progress.speed/scale');
+            omega.mode = "fixed";
+            omega.value = value;
+            omega.range = [value, value];
+
+        case {"speed_linear", "scale_linear"}
+            scaleRange = getStructField(progress, 'speedRange', ...
+                getStructField(progress, 'scaleRange', [1, 1]));
+            scaleRange = vectorNParam(scaleRange, 2, ...
+                'par.progress.speedRange/scaleRange');
+            range = scaleRange(:).' .* baseRange;
+            validateOmegaValues(range, 'par.progress.speedRange/scaleRange');
+            omega.mode = "linear";
+            omega.value = range(2);
+            omega.range = range(:).';
+
+        otherwise
+            error('Unknown legacy par.progress.mode "%s".', mode);
+    end
 end
 
-function simTend = speedLinearDuration(baseTend, speedRange)
+function validateOmegaValues(values, name)
 
-    simTend = 2*baseTend/(speedRange(1) + speedRange(2));
+    if any(~isfinite(values)) || any(values < 0)
+        error("%s must contain finite nonnegative angular frequencies.", name);
+    end
 end
 
-function ref = evalSpeedLinearTrajectory( ...
-        baseEval, baseTend, t, simTend, speedRange, allowPredict)
+function [theta, thetaDot, thetaDDot, theta3, theta4] = trajectoryTheta( ...
+        t, cfg, allowPredict)
 
-    if nargin < 6
+    if nargin < 3
         allowPredict = false;
     end
 
-    speed0 = speedRange(1);
-    speed1 = speedRange(2);
-    speedDot = (speed1 - speed0)/simTend;
-
-    if allowPredict && t > simTend
-        tClip = simTend;
-        % MPC prediction beyond the simulated trajectory end: keep moving on
-        % the same geometric curve at the terminal progress speed lambda1.
-        % This avoids presenting the finite horizon with an artificial stop:
-        %   s(t) = T0 + lambda1*(t-T), ds/dt=lambda1, d2s/dt2=0.
-        s = baseTend + speed1*(t - simTend);
-        sDot = speed1;
-        sDDot = 0;
-    else
-        tClip = min(max(t, 0), simTend);
-        if tClip >= simTend - 10*eps(max(simTend, 1))
-            s = baseTend;
-            sDot = speed1;
-        else
-            s = speed0*tClip + 0.5*speedDot*tClip^2;
-            sDot = speed0 + speedDot*tClip;
-        end
-        sDDot = speedDot;
-    end
-
-    ref = evalProgressTrajectory( ...
-        baseEval, s, sDot, sDDot, 0, 0, baseTend, allowPredict);
+    [theta, thetaDot, thetaDDot, theta3, theta4] = scheduledAngularState( ...
+        t, cfg.omega, cfg.Tend, allowPredict);
+    theta = cfg.theta0 + theta;
 end
 
-function ref = evalSpeedFixedTrajectory( ...
-        baseEval, baseTend, t, simTend, speed, allowPredict)
+function [tau, tauDot] = trajectoryLinearTime(t, Tend, allowPredict)
 
-    if nargin < 6
+    if nargin < 3
         allowPredict = false;
     end
-
-    if allowPredict && t > simTend
-        s = baseTend + speed*(t - simTend);
-    else
-        tClip = min(max(t, 0), simTend);
-        if tClip >= simTend - 10*eps(max(simTend, 1))
-            s = baseTend;
-        else
-            s = speed*tClip;
-        end
-    end
-
-    ref = evalProgressTrajectory( ...
-        baseEval, s, speed, 0, 0, 0, baseTend, allowPredict);
-end
-
-function ref = evalProgressTrajectory( ...
-        baseEval, s, sDot, sDDot, sDDDot, sDDDDot, ...
-        baseTend, allowPredict)
-
-    % Time reparameterization derivatives for the paper:
-    % Let r_d(t)=r0(s(t)), lambda=s_dot, beta=s_ddot,
-    % gamma=s^(3), delta=s^(4). If primes denote d/ds, then
-    %   v_d     = r0' lambda
-    %   a_d     = r0'' lambda^2 + r0' beta
-    %   j_d     = r0''' lambda^3 + 3 r0'' lambda beta + r0' gamma
-    %   s_d     = r0'''' lambda^4 + 6 r0''' lambda^2 beta
-    %             + 3 r0'' beta^2 + 4 r0'' lambda gamma + r0' delta.
-    % The same scalar chain rule is applied to the base yaw psi0(s):
-    %   psi_dot = psi0' lambda,
-    %   psi_ddot = psi0'' lambda^2 + psi0' beta.
-    if nargin < 8
-        allowPredict = false;
-    end
-
-    sRaw = s;
 
     if allowPredict
-        s = max(sRaw, 0);
+        tau = max(t, 0);
+        tauDot = double(t >= 0);
     else
-        s = min(max(sRaw, 0), baseTend);
-
-        if sRaw < 0 || sRaw > baseTend
-            sDot = 0;
-            sDDot = 0;
-            sDDDot = 0;
-            sDDDDot = 0;
-        end
+        tau = min(max(t, 0), Tend);
+        tauDot = double(t >= 0 && t <= Tend);
     end
-
-    ref = baseEval(s);
-    ref = completeReferenceDerivatives(ref);
-
-    vBase = ref.v;
-    aBase = ref.a;
-    jBase = ref.j;
-    sBase = ref.s;
-    psiDotBase = ref.psiDot;
-    psiDDotBase = ref.psiDDot;
-
-    ref.v = vBase*sDot;
-    ref.a = aBase*sDot^2 + vBase*sDDot;
-    ref.j = jBase*sDot^3 + 3*aBase*sDot*sDDot + vBase*sDDDot;
-    ref.s = sBase*sDot^4 + 6*jBase*sDot^2*sDDot ...
-        + 3*aBase*sDDot^2 + 4*aBase*sDot*sDDDot ...
-        + vBase*sDDDDot;
-    ref.psiDot = psiDotBase*sDot;
-    ref.psiDDot = psiDDotBase*sDot^2 + psiDotBase*sDDot;
 end
 
-function scale = trajectoryScaleAtFraction(par, fraction)
+function [theta, thetaDot, thetaDDot, theta3, theta4] = ...
+        scheduledAngularState(t, omega, Tend, allowPredict)
 
-    fraction = min(max(fraction, 0), 1);
+    if nargin < 4
+        allowPredict = false;
+    end
 
-    if ~isfield(par, 'progress') || ~isfield(par.progress, 'mode')
-        scale = 1;
+    Tend = max(double(Tend), eps);
+
+    if allowPredict && t > Tend
+        [thetaEnd, omegaEnd] = scheduledAngularState(Tend, omega, Tend, false);
+        theta = thetaEnd + omegaEnd*(t - Tend);
+        thetaDot = omegaEnd;
+        thetaDDot = 0;
+        theta3 = 0;
+        theta4 = 0;
         return;
     end
 
-    switch string(par.progress.mode)
-        case "speed_linear"
-            speedRange = par.progress.speedRange;
-            speed = speedRange(1) + (speedRange(2) - speedRange(1))*fraction;
-        case "speed_fixed"
-            speed = par.progress.speed;
+    outside = t < 0 || t > Tend;
+    t = min(max(t, 0), Tend);
+
+    switch omega.mode
+        case "fixed"
+            theta = omega.value*t;
+            thetaDot = omega.value;
+            thetaDDot = 0;
+            theta3 = 0;
+            theta4 = 0;
+
+        case "linear"
+            omega0 = omega.range(1);
+            omega1 = omega.range(2);
+            omegaDelta = omega1 - omega0;
+            theta = omega0*t + 0.5*omegaDelta*t^2/Tend;
+            thetaDot = omega0 + omegaDelta*t/Tend;
+            thetaDDot = omegaDelta/Tend;
+            theta3 = 0;
+            theta4 = 0;
+
+        case "quadratic"
+            omega0 = omega.range(1);
+            omega1 = omega.range(2);
+            omegaDelta = omega1 - omega0;
+            theta = omega0*t + omegaDelta*t^3/(3*Tend^2);
+            thetaDot = omega0 + omegaDelta*(t/Tend)^2;
+            thetaDDot = 2*omegaDelta*t/Tend^2;
+            theta3 = 2*omegaDelta/Tend^2;
+            theta4 = 0;
+
         otherwise
-            speed = 1;
+            error('Unknown angular-frequency schedule "%s".', omega.mode);
     end
 
-    scale = 1/max(speed, eps);
+    if outside && ~allowPredict
+        thetaDot = 0;
+        thetaDDot = 0;
+        theta3 = 0;
+        theta4 = 0;
+    end
 end
-
 
 function shape = trajectoryShape(par)
 
-    intensity = min(max(getStructField(par, 'trajIntensity', 0.75), 0), 1);
-    scaleEnd = trajectoryScaleAtFraction(par, 1.0);
-
-    thrustAccel = max(par.Tmax/max(par.m, eps) - par.g, 0.5*par.g);
+    trajRoot = getStructField(par, 'traj', struct());
     shape.g = par.g;
-    shape.baseTend = par.Tend;
-    shape.scaleEnd = scaleEnd;
-    shape.helixTurns = max(double(getStructField(par, 'helixTurns', 1)), eps);
-    shape.helixAccel = (0.12 + 0.10*intensity)*min(thrustAccel, par.g);
-    shape.regularAccel = max((0.18 + 0.20*intensity)*thrustAccel*scaleEnd^2, ...
-        0.10*par.g*scaleEnd^2);
-    shape.longAmp = 2.5;
-    shape.shortAmp = 1.5;
-    shape.circleRadius = 3.0;
-    shape.cruiseHeight = 3.0;
-    shape.lowHeight = 1.0;
-    shape.raceTrackMaxSpeed = max(double(getStructField(par, ...
-        'raceTrackMaxSpeed', 19.4)), 1);
-    shape.raceTrackCenter = [3.75; 0.50];
-    shape.raceTrackAxes = [8.75; 4.50];
+    shape.Tend = max(double(par.Tend), eps);
+    [shape.params, shape.paramName] = trajectoryParamsForName(par, trajRoot);
+    shape.omega = getStructField(shape.params, 'omega', ...
+        getStructField(trajRoot, 'omega', struct()));
+    shape.legacyProgress = getStructField(par, 'progress', struct());
 
+end
+
+function [trajPar, paramName] = trajectoryParamsForName(par, trajRoot)
+
+    fieldName = matlab.lang.makeValidName(char(par.trajName));
+    paramName = "par.traj." + string(fieldName);
+
+    if ~isfield(trajRoot, fieldName) || ~isstruct(trajRoot.(fieldName))
+        error("%s must be defined as a struct.", paramName);
+    end
+
+    trajPar = trajRoot.(fieldName);
+
+    if isfield(trajRoot, 'omega')
+        if isfield(trajPar, 'omega') && isstruct(trajPar.omega)
+            trajPar.omega = mergeStructRecursive(trajRoot.omega, trajPar.omega);
+        else
+            trajPar.omega = trajRoot.omega;
+        end
+    end
+end
+
+function value = positiveScalarParam(value, name)
+
+    value = double(value);
+
+    if ~isscalar(value) || ~isfinite(value) || value <= 0
+        error("%s must be a finite positive scalar.", name);
+    end
+end
+
+function value = finiteScalarParam(value, name)
+
+    value = double(value);
+
+    if ~isscalar(value) || ~isfinite(value)
+        error("%s must be a finite scalar.", name);
+    end
 end
 
 function dst = mergeStructRecursive(dst, src)
@@ -861,7 +926,7 @@ function par = finalizeActuatorModel(par)
     par.allocation.uMin = par.allocation.uMin(:);
     par.allocation.uMax = par.allocation.uMax(:);
 
-    [par.allocation.B, par.allocation.B_px4, par.allocation.B_px4_norm] = ...
+    [par.allocation.B, par.allocation.B_px4, par.allocation.B_px4_norm,par.allocation.D_px4] = ...
         irisAllocationMatrices(par);
 
     par.Tmax = allocationForceLimit(par);
@@ -903,8 +968,36 @@ function par = finalizePX4CascadedGains(par)
     %
     % where S_tau maps PX4 normalized torque to physical body torque for the
     % current Iris allocation matrix.
+    % PX4 gain equivalence used below:
+    %
+    %   benchmark translational feedback:
+    %       a_fb = Kp*e_p + Kv*e_v
+    %
+    %   PX4 translational feedback:
+    %       v_sp = v_ref + K_pos*e_p
+    %       a_fb = K_vel*(v_sp - v)
+    %            = K_vel*K_pos*e_p + K_vel*e_v
+    %
+    %   Exact diagonal match:
+    %       K_vel = diag(Kv)
+    %       K_pos = diag(Kp)./diag(Kv)
+    %
+    %   benchmark attitude/rate feedback:
+    %       tau_fb = J*(KR*e_R + KOmega*(Omega_ref - Omega))
+    %
+    %   PX4 attitude/rate feedback in physical torque units:
+    %       Omega_sp = K_att*e_R + Omega_ff
+    %       tau_fb = S_tau*K_rate*(Omega_sp - Omega)
+    %              = S_tau*K_rate*K_att*e_R - S_tau*K_rate*Omega
+    %
+    %   Exact diagonal match:
+    %       K_att  = diag(KR)./diag(KOmega)
+    %       K_rate = diag(S_tau)\diag(J*KOmega)
+    %
+    % where S_tau maps PX4 normalized torque to physical body torque for the
+    % current Iris allocation matrix.
     px4PhysicalFromNorm = par.allocation.B_px4 / par.allocation.B_px4_norm;
-    torqueScale = px4PhysicalFromNorm(2:4, 2:4);
+    torqueScale = px4PhysicalFromNorm(2:4, 2:4); % inv(torqueScale)=D_px4
 
     gainSource = string(getStructField(par.px4_iris, 'gainSource', "manual"));
     if gainSource == "benchmark_equivalent"
@@ -937,6 +1030,9 @@ function par = finalizePX4CascadedGains(par)
     par.px4_iris.velI = par.px4_iris.velI(:);
     par.px4_iris.velD = par.px4_iris.velD(:);
     par.px4_iris.rateP = par.px4_iris.rateP(:);
+    par.px4_iris.rateI = par.px4_iris.rateI(:);
+    par.px4_iris.rateD = par.px4_iris.rateD(:);
+    par.px4_iris.rateFF = par.px4_iris.rateFF(:);
     par.px4_iris.rateI = par.px4_iris.rateI(:);
     par.px4_iris.rateD = par.px4_iris.rateD(:);
     par.px4_iris.rateFF = par.px4_iris.rateFF(:);
@@ -1003,7 +1099,7 @@ function Tmax = allocationForceLimit(par)
     Tmax = sum(max(row.*lb, row.*ub));
 end
 
-function [B, B_px4, B_px4_norm] = irisAllocationMatrices(par)
+function [B, B_px4, B_px4_norm,D_px4] = irisAllocationMatrices(par)
 
     % This is the control-allocation construction from iris.m, kept local so
     % main.m derives standard and PX4 matrices from the same Gazebo Iris model.
@@ -1022,7 +1118,7 @@ function [B, B_px4, B_px4_norm] = irisAllocationMatrices(par)
         B2(:,i) = [moment; force];
     end
 
-    B3 = zeros(6,4);
+    B3 = zeros(6,4); % B2 * T_max = B3
 
     for i = 1:4
         r = pos(i,:)';
@@ -1033,20 +1129,12 @@ function [B, B_px4, B_px4_norm] = irisAllocationMatrices(par)
 
     [D3, B3_norm] = px4_normalize_B(B3, true);
     
-
+    D_px4 = diag([D3(6,6),D3(1,1),D3(2,2),D3(3,3)]);
     B = [B2(6,:); B2(1:3,:)];
     B_px4 = [B3(6,:); B3(1:3,:)];
     B_px4_norm = [B3_norm(6,:); B3_norm(1:3,:)];
-    D_tau_px4 = D3(1:3,1:3);
-    D_T_px4 = D3(4:6,4:6);
-
-% par.px4_iris.posP=
-% par.Kp/par.Kv
-% par.px4_iris.velP=
-% D_T_px4*par.Kv
-
-
-
+    D_tau_px4 = D3(1:3,1:3); %  
+    D_T_px4 = D3(4:6,4:6); % D_T_px4= 1/(4*T_max),  h=m*g/(4*T_max), h/g=m/(4*T_max)
 
 end
 
@@ -1274,6 +1362,21 @@ function v = vector3Param(x, name)
     end
 end
 
+function v = vectorNParam(x, n, name)
+
+    if isscalar(x)
+        v = repmat(double(x), n, 1);
+    else
+        v = x(:);
+    end
+
+    if numel(v) ~= n
+        error("%s must be scalar or %dx1.", name, n);
+    end
+
+    v = double(v);
+end
+
 function seed = normalizedSeed(seed)
 
     seed = double(seed);
@@ -1305,16 +1408,15 @@ end
 function ref = setHeadingFromVelocity(ref, defaultPsi)
 
     % Heading law used by the horizontal figure-eight, fast circle, and race
-    % track base curves:
-    %   psi0(s) = atan2(y0'(s), x0'(s)).
-    % Since the base curve evaluator already returns derivatives with respect
-    % to its argument, this helper applies the equivalent time-domain formulas
-    % before the outer s=s(t) reparameterization:
+    % track curves:
+    %   psi(t) = atan2(v_y(t), v_x(t)).
+    % The trajectory evaluator already returns time derivatives, so this helper
+    % computes yaw rate and yaw acceleration directly from v/a/j:
     %   psi_dot = (v_x*a_y - v_y*a_x)/(v_x^2 + v_y^2),
     %   psi_ddot = ((v_x*j_y - v_y*j_x)*(v_x^2+v_y^2)
     %               - (v_x*a_y - v_y*a_x)*2*(v_x*a_x+v_y*a_y))
     %              /(v_x^2+v_y^2)^2.
-    % If the horizontal speed is zero, psi0 is undefined and defaultPsi is
+    % If the horizontal speed is zero, psi is undefined and defaultPsi is
     % used with zero yaw derivatives.
     speed2 = ref.v(1)^2 + ref.v(2)^2;
 
@@ -1339,7 +1441,7 @@ end
 function ref = setConstantHeading(ref, psi)
 
     % Heading law used by vertical/flip trajectories:
-    %   psi0(s) = psi_c, psi0'(s) = psi0''(s) = 0.
+    %   psi(t) = psi_c, psi_dot(t) = psi_ddot(t) = 0.
     ref.psi = psi;
     ref.psiDot = 0;
     ref.psiDDot = 0;
@@ -1379,31 +1481,40 @@ end
 
 %% ========================================================================
 %% Analytic horizontal figure-eight
-% Base curve:
-%   theta = Omega*s,
-%   r0(s) = [Ax*sin(theta);
-%            Ay*sin(2*theta);
-%            -h0].
-%   psi0(s) = atan2(y0'(s), x0'(s)).
+%   theta = theta0 + integral omega(t) dt,
+%   r(t) = [Ax*sin(theta);
+%           Ay*sin(2*theta);
+%           -Hc].
+%   psi(t) follows the horizontal velocity heading.
 function cfg = makeFigure8HorizontalParams(shape)
 
-    cfg.Ax = shape.longAmp;
-    cfg.Ay = shape.shortAmp;
-    cfg.h0 = shape.cruiseHeight;
-    cfg.Tfig = periodForAccel(max(cfg.Ax, 4*cfg.Ay), ...
-        shape.regularAccel, 7.0, shape.baseTend);
+    p = shape.params;
+    name = shape.paramName;
+    cfg.Ax = positiveScalarParam(getStructField(p, 'Ax', 2.5), name + ".Ax");
+    cfg.Ay = positiveScalarParam(getStructField(p, 'Ay', 1.5), name + ".Ay");
+    cfg.Hc = positiveScalarParam(getStructField(p, 'Hc', 3.0), name + ".Hc");
+    cfg.theta0 = finiteScalarParam(getStructField(p, 'theta0', 0), ...
+        name + ".theta0");
+    cfg.Tend = shape.Tend;
+    cfg.omega = resolveTrajectoryOmega(shape);
 end
 
-function ref = evalFigure8Horizontal(t, cfg)
+function ref = evalFigure8Horizontal(t, cfg, allowPredict)
 
-    Om = 2*pi/cfg.Tfig;
+    if nargin < 3
+        allowPredict = false;
+    end
+
+    [theta, thetaDot, thetaDDot, theta3, theta4] = ...
+        trajectoryTheta(t, cfg, allowPredict);
 
     [x, vx, ax, jx, sx] = trigDerivatives( ...
-        cfg.Ax, Om*t, Om, 0, 0, 0, "sin");
+        cfg.Ax, theta, thetaDot, thetaDDot, theta3, theta4, "sin");
     [y, vy, ay, jy, sy] = trigDerivatives( ...
-        cfg.Ay, 2*Om*t, 2*Om, 0, 0, 0, "sin");
+        cfg.Ay, 2*theta, 2*thetaDot, 2*thetaDDot, ...
+        2*theta3, 2*theta4, "sin");
 
-    ref.p = [x; y; -cfg.h0];
+    ref.p = [x; y; -cfg.Hc];
     ref.v = [vx; vy; 0];
     ref.a = [ax; ay; 0];
     ref.j = [jx; jy; 0];
@@ -1413,33 +1524,30 @@ end
 
 %% ========================================================================
 %% Analytic vertical figure-eight
-% Base curve:
-%   theta = theta0 + Omega*s,
-%   r0(s) = [0;
-%            Ay*sin(theta);
-%            -(hLow+Az) - Az*sin(2*theta)].
-%   psi0(s) = 0.
+%   r(t) = [0;
+%           Ay*sin(theta);
+%           -Hc - Az*sin(2*theta)].
 function cfg = makeFigure8VerticalParams(shape)
 
-    cfg.Ay = shape.longAmp;
-    cfg.Az = shape.shortAmp;
-    cfg.hLow = shape.lowHeight;
-    cfg.theta0 = -pi/4;
-    accelLimit = shape.regularAccel;
-    cfg.Tfig = periodForAccel(max(cfg.Ay, 4*cfg.Az), ...
-        accelLimit, 7.0, shape.baseTend);
+    p = shape.params;
+    name = shape.paramName;
+    cfg.Ay = positiveScalarParam(getStructField(p, 'Ay', 2.5), name + ".Ay");
+    cfg.Az = positiveScalarParam(getStructField(p, 'Az', 1.5), name + ".Az");
+    cfg.Hc = positiveScalarParam(getStructField(p, 'Hc', 2.5), name + ".Hc");
+    cfg.theta0 = finiteScalarParam(getStructField(p, 'theta0', -pi/4), ...
+        name + ".theta0");
+    cfg.Tend = shape.Tend;
+    cfg.omega = resolveTrajectoryOmega(shape);
 end
 
-function ref = evalFigure8Vertical(t, cfg)
+function ref = evalFigure8Vertical(t, cfg, allowPredict)
 
-    hCenter = cfg.hLow + cfg.Az;
-    Om = 2*pi/cfg.Tfig;
+    if nargin < 3
+        allowPredict = false;
+    end
 
-    theta = cfg.theta0 + Om*t;
-    thetaDot = Om;
-    thetaDDot = 0;
-    theta3 = 0;
-    theta4 = 0;
+    [theta, thetaDot, thetaDDot, theta3, theta4] = ...
+        trajectoryTheta(t, cfg, allowPredict);
 
     [y, vy, ay, jy, sy] = trigDerivatives( ...
         cfg.Ay, theta, thetaDot, thetaDDot, theta3, theta4, "sin");
@@ -1447,7 +1555,7 @@ function ref = evalFigure8Vertical(t, cfg)
         -cfg.Az, 2*theta, 2*thetaDot, 2*thetaDDot, ...
         2*theta3, 2*theta4, "sin");
 
-    ref.p = [0; y; -hCenter + zOsc];
+    ref.p = [0; y; -cfg.Hc + zOsc];
     ref.v = [0; vy; vz];
     ref.a = [0; ay; az];
     ref.j = [0; jy; jz];
@@ -1457,156 +1565,157 @@ end
 
 %% ========================================================================
 %% Analytic x-forward helix_flip
-% Base curve:
-%   theta = omega*s, omega = 2*pi*N/T0,
-%   r0(s) = [(r*N/T0)*s;
-%            r*sin(theta);
-%            -hCenter + r*cos(theta)].
-% helix_flip_y swaps the forward axis from x to y, and flip_loop_sine removes
-% the forward translation.
-%   psi0(s) = 0.
+%   x = Vx*t, y = Ay*sin(theta), z = -Hc + Az*cos(theta).
+% flip_loop_sine uses the same form with Vx=0.
 function cfg = makeHelixFlipParams(shape)
 
-    cfg.turns = shape.helixTurns;
-    cfg.T = shape.baseTend;
-    cfg.omega = 2*pi*cfg.turns/cfg.T;
-    cfg.radius = shape.helixAccel/cfg.omega^2;
-    cfg.length = cfg.radius*cfg.turns;
-    cfg.hStart = max(1.50, 0.25*cfg.radius);
-    cfg.hCenter = cfg.hStart + cfg.radius;
+    p = shape.params;
+    name = shape.paramName;
+    cfg.Ay = positiveScalarParam(getStructField(p, 'Ay', 2.0), name + ".Ay");
+    cfg.Az = positiveScalarParam(getStructField(p, 'Az', 2.0), name + ".Az");
+    cfg.Hc = positiveScalarParam(getStructField(p, 'Hc', 3.0), name + ".Hc");
+    cfg.Vx = finiteScalarParam(getStructField(p, 'Vx', 0.0), name + ".Vx");
+    cfg.theta0 = finiteScalarParam(getStructField(p, 'theta0', 0), ...
+        name + ".theta0");
+    cfg.Tend = shape.Tend;
+    cfg.omega = resolveTrajectoryOmega(shape);
 end
 
-function ref = evalHelixFlip(t, cfg)
+function cfg = makeHelixFlipYParams(shape)
 
-    theta = cfg.omega*t;
+    p = shape.params;
+    name = shape.paramName;
+    cfg.Ax = positiveScalarParam(getStructField(p, 'Ax', 2.0), name + ".Ax");
+    cfg.Az = positiveScalarParam(getStructField(p, 'Az', 2.0), name + ".Az");
+    cfg.Hc = positiveScalarParam(getStructField(p, 'Hc', 3.0), name + ".Hc");
+    cfg.Vy = finiteScalarParam(getStructField(p, 'Vy', 0.0), name + ".Vy");
+    cfg.theta0 = finiteScalarParam(getStructField(p, 'theta0', 0), ...
+        name + ".theta0");
+    cfg.Tend = shape.Tend;
+    cfg.omega = resolveTrajectoryOmega(shape);
+end
+
+function ref = evalHelixFlip(t, cfg, allowPredict)
+
+    if nargin < 3
+        allowPredict = false;
+    end
+
+    [theta, thetaDot, thetaDDot, theta3, theta4] = ...
+        trajectoryTheta(t, cfg, allowPredict);
 
     [y, vy, ay, jy, sy] = trigDerivatives( ...
-        cfg.radius, theta, cfg.omega, 0, 0, 0, "sin");
+        cfg.Ay, theta, thetaDot, thetaDDot, theta3, theta4, "sin");
     [zOsc, vz, az, jz, sz] = trigDerivatives( ...
-        cfg.radius, theta, cfg.omega, 0, 0, 0, "cos");
+        cfg.Az, theta, thetaDot, thetaDDot, theta3, theta4, "cos");
 
-    vx = cfg.length/cfg.T;
+    [tau, tauDot] = trajectoryLinearTime(t, cfg.Tend, allowPredict);
+    x = cfg.Vx*tau;
+    vx = cfg.Vx*tauDot;
+    ax = 0;
+    jx = 0;
+    sx = 0;
 
-    ref.p = [vx*t; y; -cfg.hCenter + zOsc];
+    ref.p = [x; y; -cfg.Hc + zOsc];
+    ref.v = [vx; vy; vz];
+    ref.a = [ax; ay; az];
+    ref.j = [jx; jy; jz];
+    ref.s = [sx; sy; sz];
+    ref = setConstantHeading(ref, 0);
+end
+
+function ref = evalHelixFlipY(t, cfg, allowPredict)
+
+    if nargin < 3
+        allowPredict = false;
+    end
+
+    [theta, thetaDot, thetaDDot, theta3, theta4] = ...
+        trajectoryTheta(t, cfg, allowPredict);
+
+    [x, vx, ax, jx, sx] = trigDerivatives( ...
+        cfg.Ax, theta, thetaDot, thetaDDot, theta3, theta4, "sin");
+    [zOsc, vz, az, jz, sz] = trigDerivatives( ...
+        cfg.Az, theta, thetaDot, thetaDDot, theta3, theta4, "cos");
+
+    [tau, tauDot] = trajectoryLinearTime(t, cfg.Tend, allowPredict);
+    y = cfg.Vy*tau;
+    vy = cfg.Vy*tauDot;
+    ay = 0;
+    jy = 0;
+    sy = 0;
+
+    ref.p = [x; y; -cfg.Hc + zOsc];
+    ref.v = [vx; vy; vz];
+    ref.a = [ax; ay; az];
+    ref.j = [jx; jy; jz];
+    ref.s = [sx; sy; sz];
+    ref = setConstantHeading(ref, 0);
+end
+
+function ref = evalFlipLoop(t, cfg, allowPredict)
+
+    if nargin < 3
+        allowPredict = false;
+    end
+
+    [theta, thetaDot, thetaDDot, theta3, theta4] = ...
+        trajectoryTheta(t, cfg, allowPredict);
+
+    [y, vy, ay, jy, sy] = trigDerivatives( ...
+        cfg.Ay, theta, thetaDot, thetaDDot, theta3, theta4, "sin");
+    [zOsc, vz, az, jz, sz] = trigDerivatives( ...
+        cfg.Az, theta, thetaDot, thetaDDot, theta3, theta4, "cos");
+
+    [tau, tauDot] = trajectoryLinearTime(t, cfg.Tend, allowPredict);
+    x = cfg.Vx*tau;
+    vx = cfg.Vx*tauDot;
+
+    ref.p = [x; y; -cfg.Hc + zOsc];
     ref.v = [vx; vy; vz];
     ref.a = [0; ay; az];
     ref.j = [0; jy; jz];
     ref.s = [0; sy; sz];
     ref = setConstantHeading(ref, 0);
-end
-
-function ref = evalHelixFlipY(t, cfg)
-
-    theta = cfg.omega*t;
-
-    [x, vx, ax, jx, sx] = trigDerivatives( ...
-        cfg.radius, theta, cfg.omega, 0, 0, 0, "sin");
-    [zOsc, vz, az, jz, sz] = trigDerivatives( ...
-        cfg.radius, theta, cfg.omega, 0, 0, 0, "cos");
-
-    vy = cfg.length/cfg.T;
-
-    ref.p = [x; vy*t; -cfg.hCenter + zOsc];
-    ref.v = [vx; vy; vz];
-    ref.a = [ax; 0; az];
-    ref.j = [jx; 0; jz];
-    ref.s = [sx; 0; sz];
-    ref = setConstantHeading(ref, 0);
-end
-
-function ref = evalFlipLoop(t, cfg)
-
-    theta = cfg.omega*t;
-
-    [y, vy, ay, jy, sy] = trigDerivatives( ...
-        cfg.radius, theta, cfg.omega, 0, 0, 0, "sin");
-    [zOsc, vz, az, jz, sz] = trigDerivatives( ...
-        cfg.radius, theta, cfg.omega, 0, 0, 0, "cos");
-
-    ref.p = [0; y; -cfg.hCenter + zOsc];
-    ref.v = [0; vy; vz];
-    ref.a = [0; ay; az];
-    ref.j = [0; jy; jz];
-    ref.s = [0; sy; sz];
-    ref = setConstantHeading(ref, 0);
-end
-
-%% ========================================================================
-%% Analytic Sun-style high-speed Race Track C
-% Sun-style high-speed racing benchmark.
-% Table VI in Sun et al. reports Race Track C with Vmax=19.4 m/s and
-% amax=37.3 m/s^2. Fig. 13 shows an approximately x=[-5,12.5] m,
-% y=[-4,5] m ground track. We use the smooth ellipse
-%   theta = theta0 + omega*s,
-%   r0(s) = [cx + Ax*cos(theta);
-%            cy + Ay*sin(theta);
-%            -h0],
-% with Ax=8.75 m, Ay=4.5 m, center=[3.75,0.5] m. omega is selected so the
-% final speed after the selected progress reparameterization reaches 19.4 m/s.
-%   psi0(s) = atan2(y0'(s), x0'(s)).
-function cfg = makeRaceTrackCParams(shape)
-
-    cfg.center = shape.raceTrackCenter(:);
-    cfg.Ax = shape.raceTrackAxes(1);
-    cfg.Ay = shape.raceTrackAxes(2);
-    cfg.h0 = shape.cruiseHeight;
-    cfg.theta0 = pi/2;
-    cfg.omega = shape.raceTrackMaxSpeed*shape.scaleEnd/cfg.Ax;
-    cfg.Ttrack = 2*pi/cfg.omega;
-end
-
-function ref = evalRaceTrackC(t, cfg)
-
-    theta = cfg.theta0 + cfg.omega*t;
-
-    [x, vx, ax, jx, sx] = trigDerivatives( ...
-        cfg.Ax, theta, cfg.omega, 0, 0, 0, "cos");
-    [y, vy, ay, jy, sy] = trigDerivatives( ...
-        cfg.Ay, theta, cfg.omega, 0, 0, 0, "sin");
-
-    ref.p = [cfg.center(1) + x; cfg.center(2) + y; -cfg.h0];
-    ref.v = [vx; vy; 0];
-    ref.a = [ax; ay; 0];
-    ref.j = [jx; jy; 0];
-    ref.s = [sx; sy; 0];
-    ref = setHeadingFromVelocity(ref, 0);
 end
 
 %% ========================================================================
 %% Analytic fast horizontal circle
-% Base curve:
-%   theta = Omega*s,
-%   r0(s) = [r*cos(theta); r*sin(theta); -h0].
-%   psi0(s) = atan2(y0'(s), x0'(s)).
+%   r(t) = [Ax*cos(theta); Ay*sin(theta); -Hc].
+%   psi(t) follows the horizontal velocity heading.
 function cfg = makeFastCircleParams(shape)
 
-    cfg.radius = shape.circleRadius;
-    cfg.h0 = shape.cruiseHeight;
-    cfg.Tcircle = periodForAccel(cfg.radius, shape.regularAccel, 5.0, ...
-        shape.baseTend);
+    p = shape.params;
+    name = shape.paramName;
+    cfg.Ax = positiveScalarParam(getStructField(p, 'Ax', 3.0), name + ".Ax");
+    cfg.Ay = positiveScalarParam(getStructField(p, 'Ay', 3.0), name + ".Ay");
+    cfg.Hc = positiveScalarParam(getStructField(p, 'Hc', 3.0), name + ".Hc");
+    cfg.theta0 = finiteScalarParam(getStructField(p, 'theta0', 0), ...
+        name + ".theta0");
+    cfg.Tend = shape.Tend;
+    cfg.omega = resolveTrajectoryOmega(shape);
 end
 
-function ref = evalFastCircle(t, cfg)
+function ref = evalFastCircle(t, cfg, allowPredict)
 
-    Om = 2*pi/cfg.Tcircle;
+    if nargin < 3
+        allowPredict = false;
+    end
+
+    [theta, thetaDot, thetaDDot, theta3, theta4] = ...
+        trajectoryTheta(t, cfg, allowPredict);
 
     [x, vx, ax, jx, sx] = trigDerivatives( ...
-        cfg.radius, Om*t, Om, 0, 0, 0, "cos");
+        cfg.Ax, theta, thetaDot, thetaDDot, theta3, theta4, "cos");
     [y, vy, ay, jy, sy] = trigDerivatives( ...
-        cfg.radius, Om*t, Om, 0, 0, 0, "sin");
+        cfg.Ay, theta, thetaDot, thetaDDot, theta3, theta4, "sin");
 
-    ref.p = [x; y; -cfg.h0];
+    ref.p = [x; y; -cfg.Hc];
     ref.v = [vx; vy; 0];
     ref.a = [ax; ay; 0];
     ref.j = [jx; jy; 0];
     ref.s = [sx; sy; 0];
     ref = setHeadingFromVelocity(ref, 0);
-end
-
-function T = periodForAccel(lengthCoeff, accelLimit, Tmin, Tmax)
-
-    T = 2*pi*sqrt(max(lengthCoeff, eps)/max(accelLimit, eps));
-    T = min(max(T, Tmin), Tmax);
 end
 
 function fBody = sunAeroForceBody(R, v, par)
@@ -2061,6 +2170,12 @@ function thrSp = px4AccelerationControl(accSp, p, par)
     if ~getStructField(p, 'decoupleHorizontalAndVerticalAcceleration', true)
         zSpecificForce = zSpecificForce + accSp(3);
     end
+    % PX4 specific-force direction. With MPC_ACC_DECOUPLE disabled, the
+    % vertical acceleration feed-forward also changes the desired tilt.
+    zSpecificForce = -par.g;
+    if ~getStructField(p, 'decoupleHorizontalAndVerticalAcceleration', true)
+        zSpecificForce = zSpecificForce + accSp(3);
+    end
     bodyZ = [-accSp(1); -accSp(2); -zSpecificForce];
     bodyZ = bodyZ/norm(bodyZ);
 
@@ -2103,9 +2218,18 @@ function ratesSp = px4AttitudeControl(R, Rd, p)
     % if qError(1) < 0
     %     qError = -qError;
     % end
+    % q = rotm2quat(R).';
+    % qd = rotm2quat(Rd).';
+    % qError = quatnormalize(quatmultiply([q(1), -q(2:4).'], qd.')).';
+    % if qError(1) < 0
+    %     qError = -qError;
+    % end
 
     % PX4 attitude P law:
     %   ratesSp = 2*qe_xyz .* attP, then apply rate limits.
+    % ratesSp = 2*qError(2:4) .* p.attP;
+    R_e=R'*Rd;
+    ratesSp = p.attP .* LogSO3(R_e);
     % ratesSp = 2*qError(2:4) .* p.attP;
     R_e=R'*Rd;
     ratesSp = p.attP .* LogSO3(R_e);
@@ -2701,6 +2825,7 @@ function pySolver = sunEnsureAcadosPython(par)
 
     if isempty(pyModule)
         sunConfigurePythonForAcados(par);
+        sunAssertAcadosInstallReady(par);
 
         setenv("ACADOS_SOURCE_DIR", char(par.sun.acadosSourceDir));
         setenv("ACADOS_INSTALL_DIR", char(par.sun.acadosSourceDir));
@@ -2747,6 +2872,41 @@ function pySolver = sunEnsureAcadosPython(par)
 
     sunConfigureAcadosSolver(pyModule, par);
     pySolver = pyModule;
+end
+
+function sunAssertAcadosInstallReady(par)
+
+    acadosDir = char(par.sun.acadosSourceDir);
+    requiredPaths = [
+        string(fullfile(acadosDir, "interfaces", "acados_template"))
+        string(fullfile(acadosDir, "lib", "link_libs.json"))
+    ];
+
+    missing = strings(0,1);
+    for i = 1:numel(requiredPaths)
+        path = requiredPaths(i);
+        if exist(path, 'file') ~= 2 && exist(path, 'dir') ~= 7
+            missing(end+1,1) = path; %#ok<AGROW>
+        end
+    end
+
+    requiredLibs = ["libacados", "libblasfeo", "libhpipm"];
+    for i = 1:numel(requiredLibs)
+        libPattern = fullfile(acadosDir, "lib", requiredLibs(i) + ".*");
+        if isempty(dir(libPattern))
+            missing(end+1,1) = string(libPattern); %#ok<AGROW>
+        end
+    end
+
+    if ~isempty(missing)
+        error(['sun_nmpc acados installation is incomplete.\n' ...
+               'Configured acados directory:\n  %s\n' ...
+               'Missing required path(s):\n  %s\n' ...
+               'Run install_acados once from the project root on this computer.\n' ...
+               'If .acados/acados already exists from a failed/partial setup, ' ...
+               'rerun install_acados after deleting or rebuilding that checkout.'], ...
+              acadosDir, strjoin(missing, newline + "  "));
+    end
 end
 
 function sunConfigureAcadosSolver(pyModule, par)
@@ -2863,8 +3023,8 @@ function ref = predictionReferenceAtTime(traj, tk, par)
 
     % Receding-horizon controllers should not see a terminal stop just because
     % tk lies past the simulated logging interval. For trajectories created by
-    % this factory, evalPredict extrapolates the geometric curve with the final
-    % progress speed. The fallback is only for externally supplied trajectories.
+    % this factory, evalPredict extrapolates the analytic curve with the terminal
+    % angular frequency. The fallback is only for externally supplied trajectories.
     if isfield(traj, 'evalPredict')
         ref = traj.evalPredict(tk);
     else

@@ -43,14 +43,12 @@
 using namespace std;
 using namespace Eigen;
 
-namespace {
-bool usesLegacyShapeOmega(int trajectory_type) {
-  return trajectory_type == TRAJ_CIRCLE || trajectory_type == TRAJ_LAMNISCATE || trajectory_type == TRAJ_STATIONARY;
-}
-}  // namespace
-
 trajectoryPublisher::trajectoryPublisher(const ros::NodeHandle& nh, const ros::NodeHandle& nh_private)
-    : nh_(nh), nh_private_(nh_private), motion_selector_(0) {
+    : nh_(nh),
+      nh_private_(nh_private),
+      motion_selector_(0),
+      first_reconfigure_(true),
+      omega_value_param_present_(false) {
   trajectoryPub_ = nh_.advertise<nav_msgs::Path>("trajectory_publisher/trajectory", 1);
   referencePub_ = nh_.advertise<geometry_msgs::TwistStamped>("reference/setpoint", 1);
   flatreferencePub_ = nh_.advertise<controller_msgs::FlatTarget>("reference/flatsetpoint", 1);
@@ -78,24 +76,12 @@ trajectoryPublisher::trajectoryPublisher(const ros::NodeHandle& nh, const ros::N
   nh_private_.param<double>("updaterate", controlUpdate_dt_, 0.01);
   nh_private_.param<double>("horizon", primitive_duration_, 1.0);
   nh_private_.param<double>("maxjerk", max_jerk_, 10.0);
-  if (!nh_private_.getParam("shapeOmega", shape_omega_)) {
-    nh_private_.param<double>("shape_omega", shape_omega_, 1.5);
+  omega_value_param_present_ = nh_private_.getParam("omegaValue", omega_value_);
+  if (!omega_value_param_present_ && !nh_private_.getParam("shapeOmega", omega_value_)) {
+    nh_private_.param<double>("shape_omega", omega_value_, 1.0);
   }
-  if (!nh_private_.getParam("trajIntensity", traj_intensity_)) {
-    nh_private_.param<double>("traj_intensity", traj_intensity_, 0.75);
-  }
-  if (!nh_private_.getParam("Tend", traj_base_duration_)) {
-    nh_private_.param<double>("traj_base_duration", traj_base_duration_, 10.0);
-  }
-  if (!nh_private_.getParam("helixTurns", helix_turns_)) {
-    nh_private_.param<double>("helix_turns", helix_turns_, 5.0);
-  }
-  if (!nh_private_.getParam("raceTrackMaxSpeed", race_track_max_speed_)) {
-    nh_private_.param<double>("race_track_max_speed", race_track_max_speed_, 19.4);
-  }
-  if (!nh_private_.getParam("trajectorySpeed", trajectory_speed_)) {
-    trajectory_speed_ = std::max(0.05, 2.0 * shape_omega_);
-  }
+  readOmegaRanges();
+  readShapeParams();
   if (!nh_private_.getParam("waitStartBeforeTrajectory", takeoff_before_trajectory_)) {
     nh_private_.param<bool>("takeoff_before_trajectory", takeoff_before_trajectory_, true);
   }
@@ -111,7 +97,7 @@ trajectoryPublisher::trajectoryPublisher(const ros::NodeHandle& nh, const ros::N
   }
   shape_trajectory_mode_ = nh_private_.getParam("trajName", trajectory_type_);
   if (!shape_trajectory_mode_) {
-    nh_private_.param<int>("trajectory_type", trajectory_type_, 6);
+    nh_private_.param<int>("trajectory_type", trajectory_type_, TRAJ_FIGURE8_HORIZONTAL);
   }
   shape_trajectory_mode_ = shape_trajectory_mode_ || trajectory_type_ != 0;
   nh_private_.param<int>("number_of_primitives", num_primitives_, 7);
@@ -163,6 +149,156 @@ trajectoryPublisher::trajectoryPublisher(const ros::NodeHandle& nh, const ros::N
   dynamic_reconfigure::Server<trajectory_publisher::TrajectoryPublisherConfig>::CallbackType dyn_cb;
   dyn_cb = boost::bind(&trajectoryPublisher::dynamicReconfigureCallback, this, _1, _2);
   dyn_server_.setCallback(dyn_cb);
+}
+
+std::pair<double, double> trajectoryPublisher::readOmegaRange(const std::string& prefix, double default_min,
+                                                              double default_max) {
+  double range_min;
+  double range_max;
+  nh_private_.param<double>(prefix + "Min", range_min, default_min);
+  nh_private_.param<double>(prefix + "Max", range_max, default_max);
+  range_min = std::max(0.0, range_min);
+  range_max = std::max(range_min, range_max);
+  return std::make_pair(range_min, range_max);
+}
+
+void trajectoryPublisher::readOmegaRanges() {
+  legacy_omega_range_ = readOmegaRange("legacyOmega", 0.05, 5.0);
+  figure8_horizontal_omega_range_ = readOmegaRange("figure8HorizontalOmega", 0.5, 1.5);
+  figure8_vertical_omega_range_ = readOmegaRange("figure8VerticalOmega", 0.5, 1.5);
+  helix_flip_omega_range_ = readOmegaRange("helixFlipOmega", 2.0, 4.0);
+  helix_flip_y_omega_range_ = readOmegaRange("helixFlipYOmega", 2.0, 4.0);
+  flip_loop_sine_omega_range_ = readOmegaRange("flipLoopSineOmega", 2.0, 4.0);
+  fast_circle_omega_range_ = readOmegaRange("fastCircleOmega", 1.5, 3.5);
+  race_track_c_omega_range_ = readOmegaRange("raceTrackCOmega", 0.05, 5.0);
+}
+
+void trajectoryPublisher::readShapeParams() {
+  nh_private_.param<double>("figure8HorizontalAx", shape_params_.figure8_horizontal_Ax, 2.0);
+  nh_private_.param<double>("figure8HorizontalAy", shape_params_.figure8_horizontal_Ay, 2.0);
+  nh_private_.param<double>("figure8HorizontalHc", shape_params_.figure8_horizontal_Hc, 3.0);
+  nh_private_.param<double>("figure8HorizontalTheta0", shape_params_.figure8_horizontal_theta0, 0.0);
+  nh_private_.param<double>("figure8VerticalAy", shape_params_.figure8_vertical_Ay, 2.0);
+  nh_private_.param<double>("figure8VerticalAz", shape_params_.figure8_vertical_Az, 2.0);
+  nh_private_.param<double>("figure8VerticalHc", shape_params_.figure8_vertical_Hc, 3.0);
+  nh_private_.param<double>("figure8VerticalTheta0", shape_params_.figure8_vertical_theta0, -M_PI / 4.0);
+  nh_private_.param<double>("helixFlipAy", shape_params_.helix_flip_Ay, 2.0);
+  nh_private_.param<double>("helixFlipAz", shape_params_.helix_flip_Az, 2.0);
+  nh_private_.param<double>("helixFlipHc", shape_params_.helix_flip_Hc, 3.0);
+  nh_private_.param<double>("helixFlipVx", shape_params_.helix_flip_Vx, 0.30);
+  nh_private_.param<double>("helixFlipTheta0", shape_params_.helix_flip_theta0, 0.0);
+  nh_private_.param<double>("helixFlipYAx", shape_params_.helix_flip_y_Ax, 2.0);
+  nh_private_.param<double>("helixFlipYAz", shape_params_.helix_flip_y_Az, 2.0);
+  nh_private_.param<double>("helixFlipYHc", shape_params_.helix_flip_y_Hc, 3.0);
+  nh_private_.param<double>("helixFlipYVy", shape_params_.helix_flip_y_Vy, 0.30);
+  nh_private_.param<double>("helixFlipYTheta0", shape_params_.helix_flip_y_theta0, 0.0);
+  nh_private_.param<double>("flipLoopSineAy", shape_params_.flip_loop_sine_Ay, 2.0);
+  nh_private_.param<double>("flipLoopSineAz", shape_params_.flip_loop_sine_Az, 2.0);
+  nh_private_.param<double>("flipLoopSineHc", shape_params_.flip_loop_sine_Hc, 3.0);
+  nh_private_.param<double>("flipLoopSineVx", shape_params_.flip_loop_sine_Vx, 0.0);
+  nh_private_.param<double>("flipLoopSineTheta0", shape_params_.flip_loop_sine_theta0, 0.0);
+  nh_private_.param<double>("fastCircleAx", shape_params_.fast_circle_Ax, 3.0);
+  nh_private_.param<double>("fastCircleAy", shape_params_.fast_circle_Ay, 3.0);
+  nh_private_.param<double>("fastCircleHc", shape_params_.fast_circle_Hc, 3.0);
+  nh_private_.param<double>("fastCircleTheta0", shape_params_.fast_circle_theta0, 0.0);
+}
+
+std::pair<double, double> trajectoryPublisher::omegaRangeForTrajectory(int type) const {
+  switch (type) {
+    case TRAJ_FIGURE8_HORIZONTAL:
+      return figure8_horizontal_omega_range_;
+    case TRAJ_FIGURE8_VERTICAL:
+      return figure8_vertical_omega_range_;
+    case TRAJ_HELIX_FLIP:
+      return helix_flip_omega_range_;
+    case TRAJ_HELIX_FLIP_Y:
+      return helix_flip_y_omega_range_;
+    case TRAJ_FLIP_LOOP_SINE:
+      return flip_loop_sine_omega_range_;
+    case TRAJ_FAST_CIRCLE:
+      return fast_circle_omega_range_;
+    case TRAJ_RACE_TRACK_C:
+      return race_track_c_omega_range_;
+    default:
+      return legacy_omega_range_;
+  }
+}
+
+double trajectoryPublisher::clampToOmegaRange(double value, int type) const {
+  const std::pair<double, double> range = omegaRangeForTrajectory(type);
+  return std::max(range.first, std::min(range.second, value));
+}
+
+bool trajectoryPublisher::activeShapeGeometryChanged(
+    const trajectory_publisher::TrajectoryPublisherConfig& config) const {
+  switch (trajectory_type_) {
+    case TRAJ_FIGURE8_HORIZONTAL:
+      return shape_params_.figure8_horizontal_Ax != config.figure8HorizontalAx ||
+             shape_params_.figure8_horizontal_Ay != config.figure8HorizontalAy ||
+             shape_params_.figure8_horizontal_Hc != config.figure8HorizontalHc ||
+             shape_params_.figure8_horizontal_theta0 != config.figure8HorizontalTheta0;
+    case TRAJ_FIGURE8_VERTICAL:
+      return shape_params_.figure8_vertical_Ay != config.figure8VerticalAy ||
+             shape_params_.figure8_vertical_Az != config.figure8VerticalAz ||
+             shape_params_.figure8_vertical_Hc != config.figure8VerticalHc ||
+             shape_params_.figure8_vertical_theta0 != config.figure8VerticalTheta0;
+    case TRAJ_HELIX_FLIP:
+      return shape_params_.helix_flip_Ay != config.helixFlipAy ||
+             shape_params_.helix_flip_Az != config.helixFlipAz ||
+             shape_params_.helix_flip_Hc != config.helixFlipHc ||
+             shape_params_.helix_flip_Vx != config.helixFlipVx ||
+             shape_params_.helix_flip_theta0 != config.helixFlipTheta0;
+    case TRAJ_HELIX_FLIP_Y:
+      return shape_params_.helix_flip_y_Ax != config.helixFlipYAx ||
+             shape_params_.helix_flip_y_Az != config.helixFlipYAz ||
+             shape_params_.helix_flip_y_Hc != config.helixFlipYHc ||
+             shape_params_.helix_flip_y_Vy != config.helixFlipYVy ||
+             shape_params_.helix_flip_y_theta0 != config.helixFlipYTheta0;
+    case TRAJ_FLIP_LOOP_SINE:
+      return shape_params_.flip_loop_sine_Ay != config.flipLoopSineAy ||
+             shape_params_.flip_loop_sine_Az != config.flipLoopSineAz ||
+             shape_params_.flip_loop_sine_Hc != config.flipLoopSineHc ||
+             shape_params_.flip_loop_sine_Vx != config.flipLoopSineVx ||
+             shape_params_.flip_loop_sine_theta0 != config.flipLoopSineTheta0;
+    case TRAJ_FAST_CIRCLE:
+      return shape_params_.fast_circle_Ax != config.fastCircleAx ||
+             shape_params_.fast_circle_Ay != config.fastCircleAy ||
+             shape_params_.fast_circle_Hc != config.fastCircleHc ||
+             shape_params_.fast_circle_theta0 != config.fastCircleTheta0;
+    default:
+      return false;
+  }
+}
+
+void trajectoryPublisher::updateShapeParamsFromConfig(
+    const trajectory_publisher::TrajectoryPublisherConfig& config) {
+  shape_params_.figure8_horizontal_Ax = config.figure8HorizontalAx;
+  shape_params_.figure8_horizontal_Ay = config.figure8HorizontalAy;
+  shape_params_.figure8_horizontal_Hc = config.figure8HorizontalHc;
+  shape_params_.figure8_horizontal_theta0 = config.figure8HorizontalTheta0;
+  shape_params_.figure8_vertical_Ay = config.figure8VerticalAy;
+  shape_params_.figure8_vertical_Az = config.figure8VerticalAz;
+  shape_params_.figure8_vertical_Hc = config.figure8VerticalHc;
+  shape_params_.figure8_vertical_theta0 = config.figure8VerticalTheta0;
+  shape_params_.helix_flip_Ay = config.helixFlipAy;
+  shape_params_.helix_flip_Az = config.helixFlipAz;
+  shape_params_.helix_flip_Hc = config.helixFlipHc;
+  shape_params_.helix_flip_Vx = config.helixFlipVx;
+  shape_params_.helix_flip_theta0 = config.helixFlipTheta0;
+  shape_params_.helix_flip_y_Ax = config.helixFlipYAx;
+  shape_params_.helix_flip_y_Az = config.helixFlipYAz;
+  shape_params_.helix_flip_y_Hc = config.helixFlipYHc;
+  shape_params_.helix_flip_y_Vy = config.helixFlipYVy;
+  shape_params_.helix_flip_y_theta0 = config.helixFlipYTheta0;
+  shape_params_.flip_loop_sine_Ay = config.flipLoopSineAy;
+  shape_params_.flip_loop_sine_Az = config.flipLoopSineAz;
+  shape_params_.flip_loop_sine_Hc = config.flipLoopSineHc;
+  shape_params_.flip_loop_sine_Vx = config.flipLoopSineVx;
+  shape_params_.flip_loop_sine_theta0 = config.flipLoopSineTheta0;
+  shape_params_.fast_circle_Ax = config.fastCircleAx;
+  shape_params_.fast_circle_Ay = config.fastCircleAy;
+  shape_params_.fast_circle_Hc = config.fastCircleHc;
+  shape_params_.fast_circle_theta0 = config.fastCircleTheta0;
 }
 
 void trajectoryPublisher::updateReference() {
@@ -229,13 +365,11 @@ void trajectoryPublisher::initializePrimitives(int type) {
       std::shared_ptr<shapetrajectory> shape = std::dynamic_pointer_cast<shapetrajectory>(motionPrimitives_.at(i));
       if (shape) {
         shape->setType(trajectory_type_);
-        shape->setBenchmarkParams(traj_intensity_, traj_base_duration_, helix_turns_, race_track_max_speed_);
-        shape->setTrajectorySpeed(trajectory_speed_);
-        const double omega = usesLegacyShapeOmega(trajectory_type_) ? shape_omega_ : trajectory_speed_ / 2.0;
-        shape->initPrimitives(shape_origin_, shape_axis_, omega);
+        shape->setParams(shape_params_);
+        shape->setPhaseShift(shape_phase_shift_);
+        shape->initPrimitives(shape_origin_, shape_axis_, omega_value_);
       }
     }
-    // TODO: Pass in parameters for primitive trajectories
   }
 }
 
@@ -244,15 +378,16 @@ void trajectoryPublisher::applyShapeParams() {
     std::shared_ptr<shapetrajectory> shape = std::dynamic_pointer_cast<shapetrajectory>(motionPrimitives_.at(i));
     if (shape) {
       shape->setType(trajectory_type_);
-      shape->setBenchmarkParams(traj_intensity_, traj_base_duration_, helix_turns_, race_track_max_speed_);
-      shape->setTrajectorySpeed(trajectory_speed_);
-      const double omega = usesLegacyShapeOmega(trajectory_type_) ? shape_omega_ : trajectory_speed_ / 2.0;
-      shape->initPrimitives(shape_origin_, shape_axis_, omega);
+      shape->setParams(shape_params_);
+      shape->setPhaseShift(shape_phase_shift_);
+      shape->initPrimitives(shape_origin_, shape_axis_, omega_value_);
     }
   }
 }
 
 void trajectoryPublisher::resetTrajectoryStart() {
+  shape_phase_shift_ = 0.0;
+  applyShapeParams();
   updateTakeoffTarget();
   trajectory_started_ = false;
   start_hold_started_ = false;
@@ -469,31 +604,38 @@ void trajectoryPublisher::mavtwistCallback(const geometry_msgs::TwistStamped& ms
 
 void trajectoryPublisher::dynamicReconfigureCallback(trajectory_publisher::TrajectoryPublisherConfig& config,
                                                      uint32_t level) {
-  const bool restart = trajectory_type_ != config.trajName ||
-                       traj_intensity_ != config.trajIntensity || traj_base_duration_ != config.Tend ||
-                       helix_turns_ != config.helixTurns || race_track_max_speed_ != config.raceTrackMaxSpeed ||
-                       trajectory_speed_ != config.trajectorySpeed ||
-                       trajectory_start_ramp_duration_ != config.trajectoryStartRampDuration ||
-                       takeoff_before_trajectory_ != config.waitStartBeforeTrajectory ||
-                       start_hold_duration_ != config.startHoldDuration;
+  if (first_reconfigure_ && !omega_value_param_present_) {
+    config.omegaValue = omega_value_;
+  }
+  config.omegaValue = clampToOmegaRange(config.omegaValue, config.trajName);
+
+  const bool trajectory_changed = trajectory_type_ != config.trajName;
+  const bool geometry_changed = !trajectory_changed && activeShapeGeometryChanged(config);
+  const bool speed_changed = omega_value_ != config.omegaValue;
+  const bool restart = trajectory_changed || geometry_changed;
+
+  if (speed_changed && !restart && (!takeoff_before_trajectory_ || trajectory_started_)) {
+    const double elapsed_time = std::max(0.0, (ros::Time::now() - start_time_).toSec());
+    shape_phase_shift_ += (omega_value_ - config.omegaValue) * elapsed_time;
+  }
 
   trajectory_type_ = config.trajName;
-  shape_omega_ = config.shapeOmega;
-  traj_intensity_ = config.trajIntensity;
-  traj_base_duration_ = config.Tend;
-  helix_turns_ = config.helixTurns;
-  race_track_max_speed_ = config.raceTrackMaxSpeed;
-  trajectory_speed_ = config.trajectorySpeed;
+  omega_value_ = config.omegaValue;
+  updateShapeParamsFromConfig(config);
   trajectory_start_ramp_duration_ = config.trajectoryStartRampDuration;
   takeoff_before_trajectory_ = config.waitStartBeforeTrajectory;
   takeoff_position_tolerance_ = config.startPositionTolerance;
   takeoff_velocity_tolerance_ = config.startVelocityTolerance;
   start_hold_duration_ = config.startHoldDuration;
+  first_reconfigure_ = false;
 
-  applyShapeParams();
   if (restart) {
     resetTrajectoryStart();
-    ROS_INFO("Trajectory reconfigured: trajName=%d speed=%.2f m/s trajIntensity=%.2f", trajectory_type_,
-             trajectory_speed_, traj_intensity_);
+    ROS_INFO("Trajectory geometry reconfigured: trajName=%d omega=%.2f rad/s", trajectory_type_, omega_value_);
+  } else {
+    applyShapeParams();
+    if (speed_changed) {
+      ROS_INFO("Trajectory speed reconfigured: trajName=%d omega=%.2f rad/s", trajectory_type_, omega_value_);
+    }
   }
 }

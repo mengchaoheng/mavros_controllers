@@ -42,6 +42,7 @@
 #include <stdio.h>
 #include <Eigen/Dense>
 #include <cstdlib>
+#include <utility>
 #include <sstream>
 #include <string>
 
@@ -97,12 +98,8 @@ class trajectoryPublisher {
   Eigen::Vector3d p_targ, v_targ, a_targ;
   Eigen::Vector3d p_mav_, v_mav_;
   Eigen::Vector3d shape_origin_, shape_axis_;
-  double shape_omega_ = 0;
-  double traj_intensity_;
-  double traj_base_duration_;
-  double helix_turns_;
-  double race_track_max_speed_;
-  double trajectory_speed_;
+  double omega_value_ = 0;
+  double shape_phase_shift_ = 0;
   double theta_ = 0.0;
   double controlUpdate_dt_;
   double primitive_duration_;
@@ -120,9 +117,20 @@ class trajectoryPublisher {
   bool trajectory_started_;
   bool start_hold_started_;
   bool shape_trajectory_mode_;
+  bool first_reconfigure_;
+  bool omega_value_param_present_;
   Eigen::Vector3d takeoff_target_;
   ros::Time start_hold_begin_time_;
   dynamic_reconfigure::Server<trajectory_publisher::TrajectoryPublisherConfig> dyn_server_;
+  shapetrajectory::Params shape_params_;
+  std::pair<double, double> legacy_omega_range_;
+  std::pair<double, double> figure8_horizontal_omega_range_;
+  std::pair<double, double> figure8_vertical_omega_range_;
+  std::pair<double, double> helix_flip_omega_range_;
+  std::pair<double, double> helix_flip_y_omega_range_;
+  std::pair<double, double> flip_loop_sine_omega_range_;
+  std::pair<double, double> fast_circle_omega_range_;
+  std::pair<double, double> race_track_c_omega_range_;
 
   std::vector<std::shared_ptr<trajectory>> motionPrimitives_;
   std::vector<Eigen::Vector3d> inputs_;
@@ -140,6 +148,13 @@ class trajectoryPublisher {
   void initializePrimitives(int type);
   void updatePrimitives();
   void applyShapeParams();
+  void readShapeParams();
+  void readOmegaRanges();
+  std::pair<double, double> readOmegaRange(const std::string& prefix, double default_min, double default_max);
+  std::pair<double, double> omegaRangeForTrajectory(int type) const;
+  double clampToOmegaRange(double value, int type) const;
+  bool activeShapeGeometryChanged(const trajectory_publisher::TrajectoryPublisherConfig& config) const;
+  void updateShapeParamsFromConfig(const trajectory_publisher::TrajectoryPublisherConfig& config);
   void resetTrajectoryStart();
   void dynamicReconfigureCallback(trajectory_publisher::TrajectoryPublisherConfig& config, uint32_t level);
   void updateTakeoffTarget();

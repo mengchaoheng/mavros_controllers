@@ -16,13 +16,51 @@
   <arg name="respawn_mavros" default="false" />
 
   <arg name="controllerName" default="0" />
-  <arg name="trajName" default="1" />
-  <arg name="trajIntensity" default="0.75" />
-  <arg name="Tend" default="10.0" />
-  <arg name="helixTurns" default="5.0" />
-  <arg name="raceTrackMaxSpeed" default="19.4" />
-  <arg name="trajectorySpeed" default="0.8" />
-  <arg name="shapeOmega" default="0.5" />
+  <arg name="trajName" default="4" />
+  <arg name="omegaValue" default="0.5" />
+  <arg name="legacyOmegaMin" default="0.0" />
+  <arg name="legacyOmegaMax" default="5.0" />
+  <arg name="figure8HorizontalOmegaMin" default="0.0" />
+  <arg name="figure8HorizontalOmegaMax" default="1.5" />
+  <arg name="figure8VerticalOmegaMin" default="0.5" />
+  <arg name="figure8VerticalOmegaMax" default="1.5" />
+  <arg name="helixFlipOmegaMin" default="0.0" />
+  <arg name="helixFlipOmegaMax" default="4.0" />
+  <arg name="helixFlipYOmegaMin" default="0.0" />
+  <arg name="helixFlipYOmegaMax" default="4.0" />
+  <arg name="flipLoopSineOmegaMin" default="0.0" />
+  <arg name="flipLoopSineOmegaMax" default="4.0" />
+  <arg name="fastCircleOmegaMin" default="0.0" />
+  <arg name="fastCircleOmegaMax" default="3.5" />
+  <arg name="raceTrackCOmegaMin" default="0.0" />
+  <arg name="raceTrackCOmegaMax" default="5.0" />
+  <arg name="figure8HorizontalAx" default="2.0" />
+  <arg name="figure8HorizontalAy" default="2.0" />
+  <arg name="figure8HorizontalHc" default="3.0" />
+  <arg name="figure8HorizontalTheta0" default="0.0" />
+  <arg name="figure8VerticalAy" default="2.0" />
+  <arg name="figure8VerticalAz" default="2.0" />
+  <arg name="figure8VerticalHc" default="3.0" />
+  <arg name="figure8VerticalTheta0" default="-0.7853981633974483" />
+  <arg name="helixFlipAy" default="2.0" />
+  <arg name="helixFlipAz" default="2.0" />
+  <arg name="helixFlipHc" default="3.0" />
+  <arg name="helixFlipVx" default="0.30" />
+  <arg name="helixFlipTheta0" default="0.0" />
+  <arg name="helixFlipYAx" default="2.0" />
+  <arg name="helixFlipYAz" default="2.0" />
+  <arg name="helixFlipYHc" default="3.0" />
+  <arg name="helixFlipYVy" default="0.30" />
+  <arg name="helixFlipYTheta0" default="0.0" />
+  <arg name="flipLoopSineAy" default="2.0" />
+  <arg name="flipLoopSineAz" default="2.0" />
+  <arg name="flipLoopSineHc" default="3.0" />
+  <arg name="flipLoopSineVx" default="0.0" />
+  <arg name="flipLoopSineTheta0" default="0.0" />
+  <arg name="fastCircleAx" default="3.0" />
+  <arg name="fastCircleAy" default="3.0" />
+  <arg name="fastCircleHc" default="3.0" />
+  <arg name="fastCircleTheta0" default="0.0" />
   <arg name="trajectoryStartRampDuration" default="2.0" />
   <arg name="waitStartBeforeTrajectory" default="true" />
   <arg name="startPositionTolerance" default="0.18" />
@@ -63,12 +101,50 @@
 
   <node if="$(arg run_trajectory_publisher)" pkg="trajectory_publisher" type="trajectory_publisher" name="trajectory_publisher" output="screen">
         <param name="trajName" value="$(arg trajName)" />
-        <param name="trajIntensity" value="$(arg trajIntensity)" />
-        <param name="Tend" value="$(arg Tend)" />
-        <param name="helixTurns" value="$(arg helixTurns)" />
-        <param name="raceTrackMaxSpeed" value="$(arg raceTrackMaxSpeed)" />
-        <param name="trajectorySpeed" value="$(arg trajectorySpeed)" />
-        <param name="shapeOmega" value="$(arg shapeOmega)" />
+        <param name="omegaValue" value="$(arg omegaValue)" />
+        <param name="legacyOmegaMin" value="$(arg legacyOmegaMin)" />
+        <param name="legacyOmegaMax" value="$(arg legacyOmegaMax)" />
+        <param name="figure8HorizontalOmegaMin" value="$(arg figure8HorizontalOmegaMin)" />
+        <param name="figure8HorizontalOmegaMax" value="$(arg figure8HorizontalOmegaMax)" />
+        <param name="figure8VerticalOmegaMin" value="$(arg figure8VerticalOmegaMin)" />
+        <param name="figure8VerticalOmegaMax" value="$(arg figure8VerticalOmegaMax)" />
+        <param name="helixFlipOmegaMin" value="$(arg helixFlipOmegaMin)" />
+        <param name="helixFlipOmegaMax" value="$(arg helixFlipOmegaMax)" />
+        <param name="helixFlipYOmegaMin" value="$(arg helixFlipYOmegaMin)" />
+        <param name="helixFlipYOmegaMax" value="$(arg helixFlipYOmegaMax)" />
+        <param name="flipLoopSineOmegaMin" value="$(arg flipLoopSineOmegaMin)" />
+        <param name="flipLoopSineOmegaMax" value="$(arg flipLoopSineOmegaMax)" />
+        <param name="fastCircleOmegaMin" value="$(arg fastCircleOmegaMin)" />
+        <param name="fastCircleOmegaMax" value="$(arg fastCircleOmegaMax)" />
+        <param name="raceTrackCOmegaMin" value="$(arg raceTrackCOmegaMin)" />
+        <param name="raceTrackCOmegaMax" value="$(arg raceTrackCOmegaMax)" />
+        <param name="figure8HorizontalAx" value="$(arg figure8HorizontalAx)" />
+        <param name="figure8HorizontalAy" value="$(arg figure8HorizontalAy)" />
+        <param name="figure8HorizontalHc" value="$(arg figure8HorizontalHc)" />
+        <param name="figure8HorizontalTheta0" value="$(arg figure8HorizontalTheta0)" />
+        <param name="figure8VerticalAy" value="$(arg figure8VerticalAy)" />
+        <param name="figure8VerticalAz" value="$(arg figure8VerticalAz)" />
+        <param name="figure8VerticalHc" value="$(arg figure8VerticalHc)" />
+        <param name="figure8VerticalTheta0" value="$(arg figure8VerticalTheta0)" />
+        <param name="helixFlipAy" value="$(arg helixFlipAy)" />
+        <param name="helixFlipAz" value="$(arg helixFlipAz)" />
+        <param name="helixFlipHc" value="$(arg helixFlipHc)" />
+        <param name="helixFlipVx" value="$(arg helixFlipVx)" />
+        <param name="helixFlipTheta0" value="$(arg helixFlipTheta0)" />
+        <param name="helixFlipYAx" value="$(arg helixFlipYAx)" />
+        <param name="helixFlipYAz" value="$(arg helixFlipYAz)" />
+        <param name="helixFlipYHc" value="$(arg helixFlipYHc)" />
+        <param name="helixFlipYVy" value="$(arg helixFlipYVy)" />
+        <param name="helixFlipYTheta0" value="$(arg helixFlipYTheta0)" />
+        <param name="flipLoopSineAy" value="$(arg flipLoopSineAy)" />
+        <param name="flipLoopSineAz" value="$(arg flipLoopSineAz)" />
+        <param name="flipLoopSineHc" value="$(arg flipLoopSineHc)" />
+        <param name="flipLoopSineVx" value="$(arg flipLoopSineVx)" />
+        <param name="flipLoopSineTheta0" value="$(arg flipLoopSineTheta0)" />
+        <param name="fastCircleAx" value="$(arg fastCircleAx)" />
+        <param name="fastCircleAy" value="$(arg fastCircleAy)" />
+        <param name="fastCircleHc" value="$(arg fastCircleHc)" />
+        <param name="fastCircleTheta0" value="$(arg fastCircleTheta0)" />
         <param name="trajectoryStartRampDuration" value="$(arg trajectoryStartRampDuration)" />
         <param name="waitStartBeforeTrajectory" value="$(arg waitStartBeforeTrajectory)" />
         <param name="startPositionTolerance" value="$(arg startPositionTolerance)" />

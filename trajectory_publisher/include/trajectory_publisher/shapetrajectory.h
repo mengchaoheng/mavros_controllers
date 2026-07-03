@@ -39,6 +39,8 @@
 #ifndef TRAJECTORY_PUBLISHER_SHAPETRAJECTORY_H
 #define TRAJECTORY_PUBLISHER_SHAPETRAJECTORY_H
 
+#include <cmath>
+
 #include "trajectory_publisher/trajectory.h"
 
 #define TRAJ_ZERO 0
@@ -54,6 +56,37 @@
 #define TRAJ_RACE_TRACK_C 10
 
 class shapetrajectory : public trajectory {
+ public:
+  struct Params {
+    double figure8_horizontal_Ax = 2.0;
+    double figure8_horizontal_Ay = 2.0;
+    double figure8_horizontal_Hc = 3.0;
+    double figure8_horizontal_theta0 = 0.0;
+    double figure8_vertical_Ay = 2.0;
+    double figure8_vertical_Az = 2.0;
+    double figure8_vertical_Hc = 3.0;
+    double figure8_vertical_theta0 = -M_PI / 4.0;
+    double helix_flip_Ay = 2.0;
+    double helix_flip_Az = 2.0;
+    double helix_flip_Hc = 3.0;
+    double helix_flip_Vx = 0.30;
+    double helix_flip_theta0 = 0.0;
+    double helix_flip_y_Ax = 2.0;
+    double helix_flip_y_Az = 2.0;
+    double helix_flip_y_Hc = 3.0;
+    double helix_flip_y_Vy = 0.30;
+    double helix_flip_y_theta0 = 0.0;
+    double flip_loop_sine_Ay = 2.0;
+    double flip_loop_sine_Az = 2.0;
+    double flip_loop_sine_Hc = 3.0;
+    double flip_loop_sine_Vx = 0.0;
+    double flip_loop_sine_theta0 = 0.0;
+    double fast_circle_Ax = 3.0;
+    double fast_circle_Ay = 3.0;
+    double fast_circle_Hc = 3.0;
+    double fast_circle_theta0 = 0.0;
+  };
+
  private:
   int type_;
   int N;
@@ -68,6 +101,8 @@ class shapetrajectory : public trajectory {
   double helix_turns_;
   double race_track_max_speed_;
   double trajectory_speed_;
+  double phase_shift_;
+  Params params_;
 
   static double clamp(double value, double low, double high);
   static double periodForAccel(double length_coeff, double accel_limit, double min_period, double max_period);
@@ -75,6 +110,7 @@ class shapetrajectory : public trajectory {
   double figure8Omega(double long_amp, double short_amp) const;
   double regularAccel() const;
   double helixAccel() const;
+  double activeOmega() const;
 
  public:
   shapetrajectory(int type);
@@ -82,6 +118,8 @@ class shapetrajectory : public trajectory {
   void initPrimitives(Eigen::Vector3d pos, Eigen::Vector3d axis, double omega);
   void setBenchmarkParams(double intensity, double base_duration, double helix_turns, double race_track_max_speed);
   void setTrajectorySpeed(double speed);
+  void setParams(const Params& params);
+  void setPhaseShift(double phase_shift);
   void setType(int type);
   void generatePrimitives(Eigen::Vector3d pos);
   void generatePrimitives(Eigen::Vector3d pos, Eigen::Vector3d vel);
