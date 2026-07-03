@@ -54,7 +54,6 @@
             <param name="ctrl_mode" value="$(arg command_input)" />
             <param name="enable_sim" value="$(arg gazebo_simulation)" />
             <param name="enable_gazebo_state" value="true"/>
-            <param name="max_acc" value="10.0" />
             <!--Params specific for Iris copter-->
             <param name="KR_x" value="12.0"/>
             <param name="KR_y" value="12.0"/>
@@ -73,7 +72,7 @@
             <param name="trajName" value="1" />
             <param name="shapeOmega" value="1.0" />
             <param name="initpos_z" value="1.0" />
-            <param name="reference_type" value="2" />
+            <param name="reference_type" value="1" />
         </node>
     </group>
 
@@ -108,7 +107,6 @@
             <param name="ctrl_mode" value="$(arg command_input)" />
             <param name="enable_sim" value="$(arg gazebo_simulation)" />
             <param name="enable_gazebo_state" value="true"/>
-            <param name="max_acc" value="10.0" />
             <!--Params specific for Iris copter-->
             <param name="KR_x" value="12.0"/>
             <param name="KR_y" value="12.0"/>
@@ -127,7 +125,7 @@
             <param name="trajName" value="1" />
             <param name="shapeOmega" value="1.5" />
             <param name="initpos_z" value="2.0" />
-            <param name="reference_type" value="2" />
+            <param name="reference_type" value="1" />
         </node>
     </group>
 

@@ -25,7 +25,6 @@
           <param name="enable_sim" value="$(arg gazebo_simulation)" />
           <param name="enable_gazebo_state" value="true"/>
           <param name="position_takeoff_hold_duration" value="$(arg positionTakeoffHoldDuration)" />
-          <param name="max_acc" value="10.0" />
           <!-- Conservative SITL defaults for the current modified PX4 raw-thrust interface. -->
           <param name="attctrl_constant" value="0.3"/>
           <param name="KR_x" value="3.0"/>
@@ -48,7 +47,7 @@
         <param name="waitStartBeforeTrajectory" value="$(arg waitStartBeforeTrajectory)" />
         <param name="startHoldDuration" value="$(arg startHoldDuration)" />
         <param name="initpos_z" value="2.0" />
-        <param name="reference_type" value="2" />
+        <param name="reference_type" value="1" />
   </node>
 
   <!-- Launch rqt_reconfigure -->

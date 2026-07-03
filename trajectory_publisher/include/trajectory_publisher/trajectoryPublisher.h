@@ -95,7 +95,7 @@ class trajectoryPublisher {
   mavros_msgs::State current_state_;
 
   int trajectory_type_;
-  Eigen::Vector3d p_targ, v_targ, a_targ;
+  Eigen::Vector3d p_targ, v_targ, a_targ, j_targ;
   Eigen::Vector3d p_mav_, v_mav_;
   Eigen::Vector3d shape_origin_, shape_axis_;
   double omega_value_ = 0;

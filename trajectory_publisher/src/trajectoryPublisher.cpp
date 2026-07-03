@@ -65,15 +65,16 @@ trajectoryPublisher::trajectoryPublisher(const ros::NodeHandle& nh, const ros::N
   mavstate_sub_ = nh_.subscribe("mavros/state", 1, &trajectoryPublisher::mavstateCallback, this,
                                 ros::TransportHints().tcpNoDelay());
 
+  nh_private_.param<double>("updaterate", controlUpdate_dt_, 1.0 / 250.0);
+  controlUpdate_dt_ = std::max(0.001, controlUpdate_dt_);
   trajloop_timer_ = nh_.createTimer(ros::Duration(0.1), &trajectoryPublisher::loopCallback, this);
-  refloop_timer_ = nh_.createTimer(ros::Duration(0.01), &trajectoryPublisher::refCallback, this);
+  refloop_timer_ = nh_.createTimer(ros::Duration(controlUpdate_dt_), &trajectoryPublisher::refCallback, this);
 
   trajtriggerServ_ = nh_.advertiseService("start", &trajectoryPublisher::triggerCallback, this);
 
   nh_private_.param<double>("initpos_x", init_pos_x_, 0.0);
   nh_private_.param<double>("initpos_y", init_pos_y_, 0.0);
   nh_private_.param<double>("initpos_z", init_pos_z_, 1.0);
-  nh_private_.param<double>("updaterate", controlUpdate_dt_, 0.01);
   nh_private_.param<double>("horizon", primitive_duration_, 1.0);
   nh_private_.param<double>("maxjerk", max_jerk_, 10.0);
   omega_value_param_present_ = nh_private_.getParam("omegaValue", omega_value_);
@@ -133,6 +134,7 @@ trajectoryPublisher::trajectoryPublisher(const ros::NodeHandle& nh, const ros::N
   p_targ << init_pos_x_, init_pos_y_, init_pos_z_;
   v_targ << 0.0, 0.0, 0.0;
   a_targ << 0.0, 0.0, 0.0;
+  j_targ << 0.0, 0.0, 0.0;
   p_mav_ << init_pos_x_, init_pos_y_, 0.0;
   v_mav_ << 0.0, 0.0, 0.0;
   shape_origin_ << init_pos_x_, init_pos_y_, init_pos_z_;
@@ -311,7 +313,10 @@ void trajectoryPublisher::updateReference() {
 
     p_targ = motionPrimitives_.at(motion_selector_)->getPosition(trigger_time_);
     v_targ = motionPrimitives_.at(motion_selector_)->getVelocity(trigger_time_);
-    if (pubreference_type_ != 0) a_targ = motionPrimitives_.at(motion_selector_)->getAcceleration(trigger_time_);
+    if (pubreference_type_ != 0) {
+      a_targ = motionPrimitives_.at(motion_selector_)->getAcceleration(trigger_time_);
+      j_targ = motionPrimitives_.at(motion_selector_)->getJerk(trigger_time_);
+    }
     return;
   }
 
@@ -352,7 +357,10 @@ void trajectoryPublisher::updateReference() {
 
   p_targ = motionPrimitives_.at(motion_selector_)->getPosition(trigger_time_);
   v_targ = motionPrimitives_.at(motion_selector_)->getVelocity(trigger_time_);
-  if (pubreference_type_ != 0) a_targ = motionPrimitives_.at(motion_selector_)->getAcceleration(trigger_time_);
+  if (pubreference_type_ != 0) {
+    a_targ = motionPrimitives_.at(motion_selector_)->getAcceleration(trigger_time_);
+    j_targ = motionPrimitives_.at(motion_selector_)->getJerk(trigger_time_);
+  }
   applyTrajectoryStartRamp(trigger_time_);
 }
 
@@ -411,6 +419,7 @@ void trajectoryPublisher::setTakeoffReference() {
   p_targ = takeoff_target_;
   v_targ << 0.0, 0.0, 0.0;
   a_targ << 0.0, 0.0, 0.0;
+  j_targ << 0.0, 0.0, 0.0;
 }
 
 bool trajectoryPublisher::takeoffTargetReached() {
@@ -433,15 +442,20 @@ void trajectoryPublisher::applyTrajectoryStartRamp(double trajectory_time) {
   const double scale_ddot =
       (60.0 * x - 180.0 * x2 + 120.0 * x3) /
       (trajectory_start_ramp_duration_ * trajectory_start_ramp_duration_);
+  const double scale_dddot =
+      (60.0 - 360.0 * x + 360.0 * x2) /
+      std::pow(trajectory_start_ramp_duration_, 3.0);
 
   const Eigen::Vector3d p_nom = p_targ;
   const Eigen::Vector3d v_nom = v_targ;
   const Eigen::Vector3d a_nom = a_targ;
+  const Eigen::Vector3d j_nom = j_targ;
   const Eigen::Vector3d dp = p_nom - takeoff_target_;
 
   p_targ = takeoff_target_ + scale * dp;
   v_targ = scale * v_nom + scale_dot * dp;
   a_targ = scale * a_nom + 2.0 * scale_dot * v_nom + scale_ddot * dp;
+  j_targ = scale * j_nom + 3.0 * scale_dot * a_nom + 3.0 * scale_ddot * v_nom + scale_dddot * dp;
 }
 
 void trajectoryPublisher::pubrefTrajectory(int selector) {
@@ -490,6 +504,9 @@ void trajectoryPublisher::pubflatrefState() {
   msg.acceleration.x = a_targ(0);
   msg.acceleration.y = a_targ(1);
   msg.acceleration.z = a_targ(2);
+  msg.jerk.x = j_targ(0);
+  msg.jerk.y = j_targ(1);
+  msg.jerk.z = j_targ(2);
   flatreferencePub_.publish(msg);
 }
 

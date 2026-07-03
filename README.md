@@ -138,9 +138,9 @@ The geometric controller publishes and subscribes the following topics.
     - /geometric_controller/drag_dx (default: 0.0)
     - /geometric_controller/drag_dy (default: 0.0)
     - /geometric_controller/drag_dz (default: 0.0)
-    - /geometric_controller/KR_x (default: 12.0; body-rate adaptation of `main.m` `px4_iris.attP(1)`)
-    - /geometric_controller/KR_y (default: 12.0; body-rate adaptation of `main.m` `px4_iris.attP(2)`)
-    - /geometric_controller/KR_z (default: 6.0; body-rate adaptation of `main.m` `px4_iris.attP(3)`)
+    - /geometric_controller/KR_x (default: 3.0; attitude error to body-rate gain)
+    - /geometric_controller/KR_y (default: 3.0; attitude error to body-rate gain)
+    - /geometric_controller/KR_z (default: 2.0; attitude error to body-rate gain)
     - /geometric_controller/normalizedthrust_constant (default: 0.02206 for Iris specific-force commands)
     - /geometric_controller/normalizedthrust_offset (default: 0.0)
 
@@ -254,11 +254,11 @@ The launch file starts `rqt_reconfigure` automatically. In the GUI:
 - select `/geometric_controller` and change `controllerName`
 - select `/trajectory_publisher` and change `trajName`
 - tune gains online with `Kp_x/y/z`, `Kv_x/y/z`, `KR_x/y/z`
-- tune acceleration INDI with `indiAccelFeedback`, `indiFilterCutoffHz`, `indiMaxCorrectionAcc`
+- tune INDI feedback with `indiAccelFeedback` and `indiFilterCutoffHz`
 - keep `waitStartBeforeTrajectory` enabled to hold the new trajectory start point until the vehicle reaches it
 
 For the original package controller, `KR` is converted internally to the old attitude time constant with `tau = 2 / mean(KR_x, KR_y, KR_z)`.
-For the new body-rate controllers, `Kp=[10,10,10]` and `Kv=[6,6,6]` match `main.m`. The sent angular-rate command is `Omega_ref + KR * attitude_error`, so the default `KR=[12,12,6]` matches `main.m` `px4_iris.attP`; the paper torque-level `KR=[150,150,3]` and `KOmega=[20,20,8]` are not sent through MAVROS because PX4 owns the rate loop.
+For the active body-rate controllers, `Kp=[10,10,10]` and `Kv=[6,6,6]` match `main.m`; the current ROS default attitude-to-body-rate gain is `KR=[3,3,2]`. The sent angular-rate command has no body-rate magnitude limit; for `geometric_indi`, the INDI thrust-vector attitude is mapped through `KR * attitude_error` without finite-differencing the feedback-shaped attitude.
 The thrust sent to PX4 is `clamp(normalizedthrust_constant * thrust + normalizedthrust_offset, 0, 1)`.
 In the current body-rate adaptation, `thrust` is specific force in m/s^2, so the Iris-aligned scale is `m/Tmax = 0.75 / (4 * 8.5) ~= 0.02206`, close to `MPC_THR_HOVER / g = 0.216 / 9.81 ~= 0.02202`. If this node is changed to command physical thrust in newtons, use `1/Tmax ~= 0.02941` instead.
 At startup and after each `trajName` change, the trajectory publisher commands the trajectory start point with zero velocity and zero acceleration. The trajectory time starts only after the vehicle is armed, in OFFBOARD mode, inside `startPositionTolerance`/`startVelocityTolerance`, and after hovering there for `startHoldDuration`.
@@ -279,9 +279,6 @@ Controller choices:
 | 1 | `geometric` |
 | 2 | `lee` |
 | 3 | `johnson` |
-| 4 | `sun_dfbc` |
-| 5 | `sun_dfbc_indi` |
-| 6 | `tal` |
 | 7 | `geometric_indi` |
 
 Trajectory choices:
@@ -303,16 +300,12 @@ Trajectory choices:
 Example tracking cases:
 
 ```bash
-# Tal controller on helix_flip
-rosrun dynamic_reconfigure dynparam set /geometric_controller controllerName 6
-rosrun dynamic_reconfigure dynparam set /trajectory_publisher trajName 6
-
 # Lee controller on fast_circle
 rosrun dynamic_reconfigure dynparam set /geometric_controller controllerName 2
 rosrun dynamic_reconfigure dynparam set /trajectory_publisher trajName 9
 
-# Sun DFBC INDI on race_track_c
-rosrun dynamic_reconfigure dynparam set /geometric_controller controllerName 5
+# Geometric INDI on race_track_c
+rosrun dynamic_reconfigure dynparam set /geometric_controller controllerName 7
 rosrun dynamic_reconfigure dynparam set /trajectory_publisher trajName 10
 ```
 

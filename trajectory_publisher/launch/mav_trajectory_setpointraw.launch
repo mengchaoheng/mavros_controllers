@@ -15,7 +15,6 @@
         <param name="trajectory_type" value="1" />
         <param name="shape_omega" value="1.2" />
         <param name="initpos_z" value="2.0" />
-        <param name="max_acc" value="10.0" />
         <param name="Kpos_x" value="8.0" />
         <param name="Kpos_y" value="8.0" />
         <param name="Kpos_z" value="30.0" />

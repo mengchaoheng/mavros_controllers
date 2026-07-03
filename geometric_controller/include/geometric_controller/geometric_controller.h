@@ -46,11 +46,13 @@
 #include <tf/transform_broadcaster.h>
 
 #include <stdio.h>
+#include <cstdint>
 #include <cstdlib>
 #include <sstream>
 #include <string>
 
 #include <geometry_msgs/PoseStamped.h>
+#include <geometry_msgs/AccelWithCovarianceStamped.h>
 #include <geometry_msgs/Twist.h>
 #include <geometry_msgs/TwistStamped.h>
 #include <mavros_msgs/AttitudeTarget.h>
@@ -101,6 +103,7 @@ class geometricCtrl {
   ros::Subscriber mavstateSub_;
   ros::Subscriber mavposeSub_, gzmavposeSub_;
   ros::Subscriber mavtwistSub_;
+  ros::Subscriber mavaccelSub_;
   ros::Subscriber yawreferenceSub_;
   ros::Publisher rotorVelPub_, angularVelPub_, target_pose_pub_;
   ros::Publisher referencePosePub_;
@@ -126,17 +129,31 @@ class geometricCtrl {
   double reference_request_dt_;
   double attctrl_tau_;
   double norm_thrust_const_, norm_thrust_offset_;
-  double max_fb_acc_;
   int controller_type_;
-  double KR_x_, KR_y_, KR_z_;
-  double indi_accel_feedback_, indi_filter_cutoff_hz_, indi_max_correction_acc_;
+  double KR_x_, KR_y_, KR_z_, KOmega_x_, KOmega_y_, KOmega_z_;
+  double indi_accel_feedback_, indi_filter_cutoff_hz_;
   Eigen::Vector3d filteredAcc_;
-  Eigen::Vector3d previousVel_;
-  ros::Time previousControlTime_;
+  Eigen::Vector3d filteredThrustAccel_;
+  Eigen::Vector3d mavAccel_;
+  Eigen::Vector3d lastVelForAccel_{Eigen::Vector3d::Zero()};
+  ros::Time previousControlTime_, mavAccelTime_;
+  std::uint64_t accel_sample_counter_{0};
+  std::uint64_t previous_accel_sample_counter_{0};
   bool accel_indi_initialized_{false};
-  Eigen::Matrix3d previousDesiredRot_{Eigen::Matrix3d::Identity()};
-  ros::Time previousDesiredAttTime_;
-  bool desired_att_initialized_{false};
+  bool accel_topic_received_{false};
+  bool velocity_accel_initialized_{false};
+  Eigen::Vector3d last_thrust_accel_{Eigen::Vector3d::Zero()};
+  Eigen::Vector3d last_indi_correction_{Eigen::Vector3d::Zero()};
+  bool thrust_accel_initialized_{false};
+  struct SecondOrderVectorFilter {
+    Eigen::Vector3d x1{Eigen::Vector3d::Zero()};
+    Eigen::Vector3d x2{Eigen::Vector3d::Zero()};
+    Eigen::Vector3d y1{Eigen::Vector3d::Zero()};
+    Eigen::Vector3d y2{Eigen::Vector3d::Zero()};
+    bool initialized{false};
+  };
+  SecondOrderVectorFilter accel_filter_;
+  SecondOrderVectorFilter thrust_accel_filter_;
   bool use_position_takeoff_{true};
   bool position_takeoff_complete_{false};
   bool position_takeoff_hold_started_{false};
@@ -161,7 +178,7 @@ class geometricCtrl {
   Eigen::Vector3d gravity_{Eigen::Vector3d(0.0, 0.0, -9.81)};
   Eigen::Vector4d mavAtt_, q_des;
   Eigen::Vector4d cmdBodyRate_;  //{wx, wy, wz, Thrust}
-  Eigen::Vector3d Kpos_, Kvel_, KR_, D_;
+  Eigen::Vector3d Kpos_, Kvel_, KR_, KOmega_, D_;
   double Kpos_x_, Kpos_y_, Kpos_z_, Kvel_x_, Kvel_y_, Kvel_z_;
   int posehistory_window_;
 
@@ -182,13 +199,16 @@ class geometricCtrl {
   void mavstateCallback(const mavros_msgs::State::ConstPtr &msg);
   void mavposeCallback(const geometry_msgs::PoseStamped &msg);
   void mavtwistCallback(const geometry_msgs::TwistStamped &msg);
+  void mavaccelCallback(const geometry_msgs::AccelWithCovarianceStamped &msg);
   void statusloopCallback(const ros::TimerEvent &event);
   bool ctrltriggerCallback(std_srvs::SetBool::Request &req, std_srvs::SetBool::Response &res);
   bool landCallback(std_srvs::SetBool::Request &request, std_srvs::SetBool::Response &response);
   geometry_msgs::PoseStamped vector3d2PoseStampedMsg(Eigen::Vector3d &position, Eigen::Vector4d &orientation);
   void computeBodyRateCmd(Eigen::Vector4d &bodyrate_cmd, const Eigen::Vector3d &target_acc);
   Eigen::Vector4d computeCascadedBodyRateCmd(const Eigen::Vector3d &specific_force,
-                                             const Eigen::Vector3d &attitude_error);
+                                             const Eigen::Vector3d &attitude_error,
+                                             const Eigen::Vector3d &omega_ref,
+                                             double thrust_accel);
   Eigen::Vector3d controlPosition(const Eigen::Vector3d &target_pos, const Eigen::Vector3d &target_vel,
                                   const Eigen::Vector3d &target_acc);
   Eigen::Vector4d controllerPDGeometric();
@@ -203,7 +223,20 @@ class geometricCtrl {
   void updateControllerGains();
   double attitudeTauFromKR() const;
   void syncLegacyAttitudeGain();
-  Eigen::Vector3d accelerationIndiCorrection(const Eigen::Vector3d &nominal_acc);
+  Eigen::Vector3d attitudeRateFeedback(const Eigen::Vector3d &attitude_error) const;
+  Eigen::Vector3d rateFeedbackFromAngularAcceleration(const Eigen::Vector3d &angular_accel_feedback) const;
+  Eigen::Vector3d johnsonLogSO3(const Eigen::Matrix3d &R) const;
+  Eigen::Matrix3d johnsonLeftJacobianSO3(const Eigen::Vector3d &phi) const;
+  Eigen::Vector3d johnsonAttitudeRateFeedback(const Eigen::Vector3d &r) const;
+  Eigen::Vector3d closedLoopSpecificForceDerivative(double thrust_accel) const;
+  Eigen::Vector3d referenceBodyRateFromForce(const Eigen::Vector3d &specific_force,
+                                             const Eigen::Vector3d &specific_force_dot,
+                                             double yaw, double yaw_rate) const;
+  Eigen::Vector3d geometricIndiReferenceBodyRate(const Eigen::Vector3d &specific_force) const;
+  Eigen::Vector3d accelerationIndiSpecificForce(const Eigen::Vector3d &nominal_acc);
+  Eigen::Vector3d secondOrderButterworthLPF(const Eigen::Vector3d &raw, SecondOrderVectorFilter &filter, double dt,
+                                            double cutoff_hz);
+  void resetSecondOrderFilter(SecondOrderVectorFilter &filter, const Eigen::Vector3d &raw);
   Eigen::Vector3d rotorDragAcceleration(const Eigen::Vector3d &reference_acc, const Eigen::Vector3d &reference_vel);
   Eigen::Vector3d logSO3(const Eigen::Matrix3d &R) const;
   Eigen::Vector3d leeSO3Error(const Eigen::Matrix3d &R, const Eigen::Matrix3d &Rd) const;

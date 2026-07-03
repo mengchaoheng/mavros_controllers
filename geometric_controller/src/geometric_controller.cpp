@@ -45,6 +45,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 using namespace Eigen;
 using namespace std;
@@ -65,8 +66,10 @@ geometricCtrl::geometricCtrl(const ros::NodeHandle &nh, const ros::NodeHandle &n
                               ros::TransportHints().tcpNoDelay());
   mavtwistSub_ = nh_.subscribe("mavros/local_position/velocity_local", 1, &geometricCtrl::mavtwistCallback, this,
                                ros::TransportHints().tcpNoDelay());
+  mavaccelSub_ = nh_.subscribe("mavros/local_position/accel", 1, &geometricCtrl::mavaccelCallback, this,
+                               ros::TransportHints().tcpNoDelay());
   ctrltriggerServ_ = nh_.advertiseService("trigger_rlcontroller", &geometricCtrl::ctrltriggerCallback, this);
-  cmdloop_timer_ = nh_.createTimer(ros::Duration(0.01), &geometricCtrl::cmdloopCallback,
+  cmdloop_timer_ = nh_.createTimer(ros::Duration(0.004), &geometricCtrl::cmdloopCallback,
                                    this);  // Define timer for constant loop rate
   statusloop_timer_ = nh_.createTimer(ros::Duration(1), &geometricCtrl::statusloopCallback,
                                       this);  // Define timer for constant loop rate
@@ -87,7 +90,6 @@ geometricCtrl::geometricCtrl(const ros::NodeHandle &nh, const ros::NodeHandle &n
   nh_private_.param<bool>("enable_sim", sim_enable_, true);
   nh_private_.param<bool>("offboard_manager_only", offboard_manager_only_, false);
   nh_private_.param<bool>("velocity_yaw", velocity_yaw_, false);
-  nh_private_.param<double>("max_acc", max_fb_acc_, 10.0);
   nh_private_.param<double>("yaw_heading", mavYaw_, 0.0);
 
   double dx, dy, dz;
@@ -109,14 +111,14 @@ geometricCtrl::geometricCtrl(const ros::NodeHandle &nh, const ros::NodeHandle &n
   nh_private_.param<double>("KR_x", KR_x_, 3.0);
   nh_private_.param<double>("KR_y", KR_y_, 3.0);
   nh_private_.param<double>("KR_z", KR_z_, 2.0);
+  nh_private_.param<double>("KOmega_x", KOmega_x_, 1.0);
+  nh_private_.param<double>("KOmega_y", KOmega_y_, 1.0);
+  nh_private_.param<double>("KOmega_z", KOmega_z_, 1.0);
   if (!nh_private_.getParam("indiAccelFeedback", indi_accel_feedback_)) {
-    nh_private_.param<double>("indi_accel_feedback", indi_accel_feedback_, 0.25);
+    nh_private_.param<double>("indi_accel_feedback", indi_accel_feedback_, 1.0);
   }
   if (!nh_private_.getParam("indiFilterCutoffHz", indi_filter_cutoff_hz_)) {
     nh_private_.param<double>("indi_filter_cutoff_hz", indi_filter_cutoff_hz_, 30.0);
-  }
-  if (!nh_private_.getParam("indiMaxCorrectionAcc", indi_max_correction_acc_)) {
-    nh_private_.param<double>("indi_max_correction_acc", indi_max_correction_acc_, 5.0);
   }
   nh_private_.param<int>("posehistory_window", posehistory_window_, 200);
   nh_private_.param<double>("init_pos_x", initTargetPos_x_, 0.0);
@@ -133,8 +135,9 @@ geometricCtrl::geometricCtrl(const ros::NodeHandle &nh, const ros::NodeHandle &n
   targetVel_ << 0.0, 0.0, 0.0;
   mavPos_ << 0.0, 0.0, 0.0;
   mavVel_ << 0.0, 0.0, 0.0;
+  mavAccel_ << 0.0, 0.0, 0.0;
   filteredAcc_ << 0.0, 0.0, 0.0;
-  previousVel_ << 0.0, 0.0, 0.0;
+  filteredThrustAccel_ << 0.0, 0.0, 0.0;
   updateControllerGains();
   if (!has_attctrl_constant) {
     attctrl_tau_ = attitudeTauFromKR();
@@ -255,8 +258,34 @@ void geometricCtrl::mavposeCallback(const geometry_msgs::PoseStamped &msg) {
 }
 
 void geometricCtrl::mavtwistCallback(const geometry_msgs::TwistStamped &msg) {
+  const ros::Time sample_time = msg.header.stamp.isZero() ? ros::Time::now() : msg.header.stamp;
   mavVel_ = toEigen(msg.twist.linear);
   mavRate_ = toEigen(msg.twist.angular);
+
+  if (!accel_topic_received_) {
+    if (velocity_accel_initialized_) {
+      const double dt = (sample_time - mavAccelTime_).toSec();
+      if (dt > 1e-4) {
+        mavAccel_ = (mavVel_ - lastVelForAccel_) / dt;
+        mavAccelTime_ = sample_time;
+        ++accel_sample_counter_;
+      }
+    } else {
+      mavAccel_ = Eigen::Vector3d::Zero();
+      mavAccelTime_ = sample_time;
+      ++accel_sample_counter_;
+      velocity_accel_initialized_ = true;
+    }
+
+    lastVelForAccel_ = mavVel_;
+  }
+}
+
+void geometricCtrl::mavaccelCallback(const geometry_msgs::AccelWithCovarianceStamped &msg) {
+  accel_topic_received_ = true;
+  mavAccel_ = toEigen(msg.accel.accel.linear);
+  mavAccelTime_ = msg.header.stamp.isZero() ? ros::Time::now() : msg.header.stamp;
+  ++accel_sample_counter_;
 }
 
 bool geometricCtrl::landCallback(std_srvs::SetBool::Request &request, std_srvs::SetBool::Response &response) {
@@ -305,8 +334,12 @@ void geometricCtrl::cmdloopCallback(const ros::TimerEvent &event) {
                      position_takeoff_hold_duration_) {
             position_takeoff_complete_ = true;
             position_takeoff_hold_started_ = false;
-            desired_att_initialized_ = false;
             accel_indi_initialized_ = false;
+            accel_filter_.initialized = false;
+            thrust_accel_filter_.initialized = false;
+            thrust_accel_initialized_ = false;
+            last_indi_correction_.setZero();
+            previous_accel_sample_counter_ = 0;
             ROS_INFO("Position takeoff complete, switching to %s body-rate tracking.", controllerName());
           }
         } else {
@@ -429,6 +462,13 @@ void geometricCtrl::pubRateCommands(const Eigen::Vector4d &cmd, const Eigen::Vec
   msg.thrust = cmd(3);
 
   angularVelPub_.publish(msg);
+
+  if (norm_thrust_const_ > 1e-6 && mavAtt_.allFinite() && mavAtt_.norm() > 1e-6) {
+    const double thrust_accel_mag = std::max(0.0, (msg.thrust - norm_thrust_offset_) / norm_thrust_const_);
+    Eigen::Vector4d current_att = mavAtt_ / mavAtt_.norm();
+    last_thrust_accel_ = thrust_accel_mag * quat2RotMatrix(current_att).col(2);
+    thrust_accel_initialized_ = true;
+  }
 }
 
 void geometricCtrl::pubPositionTakeoffSetpoint() {
@@ -493,11 +533,15 @@ void geometricCtrl::updateControllerGains() {
   Kpos_ << Kpos_x_, Kpos_y_, Kpos_z_;
   Kvel_ << Kvel_x_, Kvel_y_, Kvel_z_;
   KR_ << KR_x_, KR_y_, KR_z_;
+  KOmega_ << KOmega_x_, KOmega_y_, KOmega_z_;
 }
 
 double geometricCtrl::attitudeTauFromKR() const {
-  const double mean_KR = std::max(0.1, (KR_x_ + KR_y_ + KR_z_) / 3.0);
-  return 2.0 / mean_KR;
+  const double kx = KR_x_ / std::max(1e-6, std::abs(KOmega_x_));
+  const double ky = KR_y_ / std::max(1e-6, std::abs(KOmega_y_));
+  const double kz = KR_z_ / std::max(1e-6, std::abs(KOmega_z_));
+  const double mean_attitude_rate_gain = std::max(0.1, (kx + ky + kz) / 3.0);
+  return 2.0 / mean_attitude_rate_gain;
 }
 
 void geometricCtrl::syncLegacyAttitudeGain() {
@@ -507,29 +551,234 @@ void geometricCtrl::syncLegacyAttitudeGain() {
   }
 }
 
-Eigen::Vector3d geometricCtrl::accelerationIndiCorrection(const Eigen::Vector3d &nominal_acc) {
-  if (indi_accel_feedback_ <= 0.0) {
-    accel_indi_initialized_ = false;
+Eigen::Vector3d geometricCtrl::attitudeRateFeedback(const Eigen::Vector3d &attitude_error) const {
+  return rateFeedbackFromAngularAcceleration(KR_.asDiagonal() * attitude_error);
+}
+
+Eigen::Vector3d geometricCtrl::rateFeedbackFromAngularAcceleration(const Eigen::Vector3d &angular_accel_feedback) const {
+  Eigen::Vector3d attitude_rate_gain;
+  for (int i = 0; i < 3; ++i) {
+    attitude_rate_gain(i) = angular_accel_feedback(i) / std::max(1e-6, std::abs(KOmega_(i)));
+  }
+  return attitude_rate_gain;
+}
+
+Eigen::Vector3d geometricCtrl::johnsonLogSO3(const Eigen::Matrix3d &R) const {
+  const double cos_angle = std::max(-1.0, std::min(1.0, 0.5 * (R.trace() - 1.0)));
+  const double angle = std::acos(cos_angle);
+
+  if (std::abs(std::abs(angle) - M_PI) < 1e-6) {
+    Eigen::EigenSolver<Eigen::Matrix3d> solver(R);
+    int axis_index = 0;
+    double min_distance_to_one = std::numeric_limits<double>::max();
+    for (int i = 0; i < 3; ++i) {
+      const double distance_to_one = std::abs(solver.eigenvalues()(i).real() - 1.0) +
+                                     std::abs(solver.eigenvalues()(i).imag());
+      if (distance_to_one < min_distance_to_one) {
+        min_distance_to_one = distance_to_one;
+        axis_index = i;
+      }
+    }
+
+    Eigen::Vector3d axis = solver.eigenvectors().col(axis_index).real();
+    if (axis.norm() > 1e-9 && axis.allFinite()) {
+      return angle * axis.normalized();
+    }
+  }
+
+  return logSO3(R);
+}
+
+Eigen::Matrix3d geometricCtrl::johnsonLeftJacobianSO3(const Eigen::Vector3d &phi) const {
+  const double angle = phi.norm();
+  if (angle < 1e-8) {
+    return Eigen::Matrix3d::Identity();
+  }
+
+  const Eigen::Vector3d axis = phi / angle;
+  const Eigen::Matrix3d axis_hat = matrix_hat(axis);
+  const double sinc_half = std::sin(0.5 * angle) / (0.5 * angle);
+  const double sinc_full = std::sin(angle) / angle;
+  return Eigen::Matrix3d::Identity() + std::sin(0.5 * angle) * sinc_half * axis_hat +
+         (1.0 - sinc_full) * axis_hat * axis_hat;
+}
+
+Eigen::Vector3d geometricCtrl::johnsonAttitudeRateFeedback(const Eigen::Vector3d &r) const {
+  const Eigen::Vector3d angular_accel_feedback = johnsonLeftJacobianSO3(r).transpose() * KR_.asDiagonal() * r;
+  return rateFeedbackFromAngularAcceleration(angular_accel_feedback);
+}
+
+Eigen::Vector3d geometricCtrl::closedLoopSpecificForceDerivative(double thrust_accel) const {
+  if (!std::isfinite(thrust_accel) || !mavAtt_.allFinite() || mavAtt_.norm() < 1e-6) {
+    return targetJerk_;
+  }
+
+  const Eigen::Matrix3d R = quat2RotMatrix(mavAtt_ / mavAtt_.norm());
+  const Eigen::Vector3d predicted_acc = gravity_ + thrust_accel * R.col(2);
+  return Kpos_.asDiagonal() * (targetVel_ - mavVel_) + Kvel_.asDiagonal() * (targetAcc_ - predicted_acc) +
+         targetJerk_;
+}
+
+Eigen::Vector3d geometricCtrl::referenceBodyRateFromForce(const Eigen::Vector3d &specific_force,
+                                                          const Eigen::Vector3d &specific_force_dot,
+                                                          double yaw, double yaw_rate) const {
+  if (!specific_force.allFinite() || !specific_force_dot.allFinite()) {
     return Eigen::Vector3d::Zero();
   }
 
-  const ros::Time now = ros::Time::now();
-  const double dt = accel_indi_initialized_ ? std::max(1e-3, (now - previousControlTime_).toSec()) : 0.01;
-  const Eigen::Vector3d measured_acc = accel_indi_initialized_ ? (mavVel_ - previousVel_) / dt : nominal_acc;
-  const double cutoff = std::max(1.0, indi_filter_cutoff_hz_);
-  const double tau = 1.0 / (2.0 * M_PI * cutoff);
-  const double alpha = std::max(0.0, std::min(1.0, dt / (tau + dt)));
-
-  filteredAcc_ = accel_indi_initialized_ ? filteredAcc_ + alpha * (measured_acc - filteredAcc_) : measured_acc;
-  previousVel_ = mavVel_;
-  previousControlTime_ = now;
-  accel_indi_initialized_ = true;
-
-  Eigen::Vector3d correction = indi_accel_feedback_ * (nominal_acc - filteredAcc_);
-  if (indi_max_correction_acc_ > 0.0 && correction.norm() > indi_max_correction_acc_) {
-    correction = indi_max_correction_acc_ / correction.norm() * correction;
+  const double force_norm = specific_force.norm();
+  if (force_norm < 1e-6) {
+    return Eigen::Vector3d::Zero();
   }
-  return correction;
+
+  const Eigen::Vector3d b3d = specific_force / force_norm;
+  const Eigen::Vector3d b3d_dot =
+      (Eigen::Matrix3d::Identity() - b3d * b3d.transpose()) * specific_force_dot / force_norm;
+
+  const Eigen::Vector3d heading(std::cos(yaw), std::sin(yaw), 0.0);
+  const Eigen::Vector3d heading_dot = yaw_rate * Eigen::Vector3d(-std::sin(yaw), std::cos(yaw), 0.0);
+  const Eigen::Vector3d b2_raw = b3d.cross(heading);
+  const double b2_raw_norm = b2_raw.norm();
+  if (b2_raw_norm < 1e-6) {
+    return Eigen::Vector3d::Zero();
+  }
+
+  const Eigen::Vector3d b2d = b2_raw / b2_raw_norm;
+  const Eigen::Vector3d b2_raw_dot = b3d_dot.cross(heading) + b3d.cross(heading_dot);
+  const Eigen::Vector3d b2d_dot =
+      (Eigen::Matrix3d::Identity() - b2d * b2d.transpose()) * b2_raw_dot / b2_raw_norm;
+  const Eigen::Vector3d b1d = b2d.cross(b3d);
+  const Eigen::Vector3d b1d_dot = b2d_dot.cross(b3d) + b2d.cross(b3d_dot);
+
+  Eigen::Matrix3d Rd;
+  Rd.col(0) = b1d;
+  Rd.col(1) = b2d;
+  Rd.col(2) = b3d;
+
+  Eigen::Matrix3d Rd_dot;
+  Rd_dot.col(0) = b1d_dot;
+  Rd_dot.col(1) = b2d_dot;
+  Rd_dot.col(2) = b3d_dot;
+
+  const Eigen::Matrix3d omega_hat = 0.5 * (Rd.transpose() * Rd_dot - Rd_dot.transpose() * Rd);
+  Eigen::Vector3d omega_ref;
+  omega_ref << omega_hat(2, 1), omega_hat(0, 2), omega_hat(1, 0);
+  return omega_ref.allFinite() ? omega_ref : Eigen::Vector3d::Zero();
+}
+
+Eigen::Vector3d geometricCtrl::geometricIndiReferenceBodyRate(const Eigen::Vector3d &specific_force) const {
+  if (!mavAtt_.allFinite() || mavAtt_.norm() < 1e-6 || !targetJerk_.allFinite()) {
+    return Eigen::Vector3d::Zero();
+  }
+
+  const Eigen::Matrix3d R = quat2RotMatrix(mavAtt_ / mavAtt_.norm());
+  const Eigen::Vector3d b1 = R.col(0);
+  const Eigen::Vector3d b2 = R.col(1);
+  const Eigen::Vector3d b3 = R.col(2);
+  double thrust_accel = thrust_accel_initialized_ ? last_thrust_accel_.norm() : specific_force.norm();
+  if (!std::isfinite(thrust_accel) || thrust_accel < 1e-6) {
+    return Eigen::Vector3d::Zero();
+  }
+
+  const double thrust_accel_dot = targetJerk_.dot(b3);
+  const Eigen::Vector3d b3_dot = (targetJerk_ - thrust_accel_dot * b3) / thrust_accel;
+
+  Eigen::Vector3d omega_ref;
+  omega_ref << -b3_dot.dot(b2), b3_dot.dot(b1), 0.0;
+  return omega_ref.allFinite() ? omega_ref : Eigen::Vector3d::Zero();
+}
+
+void geometricCtrl::resetSecondOrderFilter(SecondOrderVectorFilter &filter, const Eigen::Vector3d &raw) {
+  filter.x1 = raw;
+  filter.x2 = raw;
+  filter.y1 = raw;
+  filter.y2 = raw;
+  filter.initialized = true;
+}
+
+Eigen::Vector3d geometricCtrl::secondOrderButterworthLPF(const Eigen::Vector3d &raw,
+                                                         SecondOrderVectorFilter &filter, double dt,
+                                                         double cutoff_hz) {
+  if (!filter.initialized || cutoff_hz <= 0.0 || dt <= 0.0) {
+    resetSecondOrderFilter(filter, raw);
+    return raw;
+  }
+
+  const double fs = 1.0 / dt;
+  const double fc = std::min(cutoff_hz, 0.45 * fs);
+  const double K = std::tan(M_PI * fc / fs);
+  const double norm_factor = 1.0 / (1.0 + std::sqrt(2.0) * K + K * K);
+  const double b0 = K * K * norm_factor;
+  const double b1 = 2.0 * b0;
+  const double b2 = b0;
+  const double a1 = 2.0 * (K * K - 1.0) * norm_factor;
+  const double a2 = (1.0 - std::sqrt(2.0) * K + K * K) * norm_factor;
+
+  const Eigen::Vector3d y = b0 * raw + b1 * filter.x1 + b2 * filter.x2 - a1 * filter.y1 - a2 * filter.y2;
+  filter.x2 = filter.x1;
+  filter.x1 = raw;
+  filter.y2 = filter.y1;
+  filter.y1 = y;
+  return y;
+}
+
+Eigen::Vector3d geometricCtrl::accelerationIndiSpecificForce(const Eigen::Vector3d &nominal_acc) {
+  const Eigen::Vector3d direct_specific_force = nominal_acc - gravity_;
+
+  if (indi_accel_feedback_ <= 0.0) {
+    accel_indi_initialized_ = false;
+    accel_filter_.initialized = false;
+    thrust_accel_filter_.initialized = false;
+    last_indi_correction_.setZero();
+    return direct_specific_force;
+  }
+
+  if (accel_sample_counter_ == previous_accel_sample_counter_) {
+    if (accel_indi_initialized_ && last_indi_correction_.allFinite()) {
+      return direct_specific_force + indi_accel_feedback_ * last_indi_correction_;
+    }
+    return direct_specific_force;
+  }
+
+  const Eigen::Vector3d measured_acc = mavAccel_;
+  const bool measured_acc_valid = measured_acc.allFinite();
+  const ros::Time sample_time = mavAccelTime_.isZero() ? ros::Time::now() : mavAccelTime_;
+  previous_accel_sample_counter_ = accel_sample_counter_;
+
+  if (!accel_indi_initialized_) {
+    filteredAcc_ = measured_acc_valid ? measured_acc : nominal_acc;
+    filteredThrustAccel_ = thrust_accel_initialized_ ? last_thrust_accel_ : direct_specific_force;
+    resetSecondOrderFilter(accel_filter_, filteredAcc_);
+    resetSecondOrderFilter(thrust_accel_filter_, filteredThrustAccel_);
+    previousControlTime_ = sample_time;
+    accel_indi_initialized_ = true;
+    last_indi_correction_.setZero();
+    return direct_specific_force;
+  }
+
+  if (!measured_acc_valid) {
+    previousControlTime_ = sample_time;
+    last_indi_correction_.setZero();
+    return direct_specific_force;
+  }
+
+  const double control_dt = std::max(1e-4, (sample_time - previousControlTime_).toSec());
+  const Eigen::Vector3d previous_thrust_accel =
+      thrust_accel_initialized_ ? last_thrust_accel_ : direct_specific_force;
+  filteredAcc_ = secondOrderButterworthLPF(measured_acc, accel_filter_, control_dt, indi_filter_cutoff_hz_);
+  filteredThrustAccel_ =
+      secondOrderButterworthLPF(previous_thrust_accel, thrust_accel_filter_, control_dt, indi_filter_cutoff_hz_);
+  previousControlTime_ = sample_time;
+
+  const Eigen::Vector3d indi_specific_force = filteredThrustAccel_ + nominal_acc - filteredAcc_;
+  last_indi_correction_ = indi_specific_force - direct_specific_force;
+  Eigen::Vector3d specific_force =
+      direct_specific_force + indi_accel_feedback_ * last_indi_correction_;
+  if (!specific_force.allFinite() || specific_force.norm() < 1e-6) {
+    specific_force = direct_specific_force;
+    last_indi_correction_.setZero();
+  }
+  return specific_force;
 }
 
 const char *geometricCtrl::controllerName() const {
@@ -638,28 +887,14 @@ void geometricCtrl::computeBodyRateCmd(Eigen::Vector4d &bodyrate_cmd, const Eige
 }
 
 Eigen::Vector4d geometricCtrl::computeCascadedBodyRateCmd(const Eigen::Vector3d &specific_force,
-                                                          const Eigen::Vector3d &attitude_error) {
+                                                          const Eigen::Vector3d &attitude_error,
+                                                          const Eigen::Vector3d &omega_ref,
+                                                          double thrust_accel) {
   q_des = acc2quaternion(specific_force, mavYaw_);
 
-  const Eigen::Matrix3d R = quat2RotMatrix(mavAtt_);
-  const Eigen::Matrix3d Rd = quat2RotMatrix(q_des);
-  const ros::Time now = ros::Time::now();
-  Eigen::Vector3d omega_ref = Eigen::Vector3d::Zero();
-
-  if (desired_att_initialized_) {
-    const double dt = std::max(1e-3, (now - previousDesiredAttTime_).toSec());
-    const Eigen::Matrix3d Rdot = (Rd - previousDesiredRot_) / dt;
-    const Eigen::Matrix3d omega_hat = 0.5 * (previousDesiredRot_.transpose() * Rdot -
-                                            Rdot.transpose() * previousDesiredRot_);
-    omega_ref << omega_hat(2, 1), omega_hat(0, 2), omega_hat(1, 0);
-  }
-  previousDesiredRot_ = Rd;
-  previousDesiredAttTime_ = now;
-  desired_att_initialized_ = true;
-
   Eigen::Vector4d bodyrate_cmd;
-  bodyrate_cmd.head(3) = omega_ref + KR_.asDiagonal() * attitude_error;
-  const double thrust_command = specific_force.dot(R.col(2));
+  bodyrate_cmd.head(3) = omega_ref + attitudeRateFeedback(attitude_error);
+  const double thrust_command = thrust_accel;
   // Convert thrust command to PX4 normalized collective thrust.
   bodyrate_cmd(3) = std::max(0.0, std::min(1.0, norm_thrust_const_ * thrust_command + norm_thrust_offset_));
   return bodyrate_cmd;
@@ -679,12 +914,15 @@ Eigen::Vector4d geometricCtrl::controllerPDGeometric() {
   //
   // ROS/MAVROS adaptation: this node can command body rates and collective
   // thrust only. The force/moment inversion above is kept as the reference
-  // formula; the implemented command is omega_ref + KR*Log(R'*Rd).
+  // formula; the implemented command is omega_ref + (KR/KOmega)*Log(R'*Rd).
   const Eigen::Vector3d aCmd = outerLoopAcceleration();
   const Eigen::Vector3d specific_force = aCmd - gravity_;
+  const double thrust_accel = specific_force.norm();
   const Eigen::Vector4d qd = acc2quaternion(specific_force, mavYaw_);
   const Eigen::Vector3d rErr = logSO3(quat2RotMatrix(mavAtt_).transpose() * quat2RotMatrix(qd));
-  return computeCascadedBodyRateCmd(specific_force, rErr);
+  const Eigen::Vector3d omega_ref =
+      referenceBodyRateFromForce(specific_force, closedLoopSpecificForceDerivative(thrust_accel), mavYaw_, 0.0);
+  return computeCascadedBodyRateCmd(specific_force, rErr, omega_ref, thrust_accel);
 }
 
 Eigen::Vector4d geometricCtrl::controllerLee() {
@@ -705,11 +943,14 @@ Eigen::Vector4d geometricCtrl::controllerLee() {
   // but send the cascaded body-rate command instead of tau.
   const Eigen::Vector3d aCmd = outerLoopAcceleration();
   const Eigen::Vector3d specific_force = aCmd - gravity_;
-  const Eigen::Vector4d qd = acc2quaternion(specific_force, mavYaw_);
   const Eigen::Matrix3d R = quat2RotMatrix(mavAtt_);
+  const double thrust_accel = specific_force.dot(R.col(2));
+  const Eigen::Vector4d qd = acc2quaternion(specific_force, mavYaw_);
   const Eigen::Matrix3d Rc = quat2RotMatrix(qd);
   const Eigen::Vector3d eR = leeSO3Error(R, Rc);
-  return computeCascadedBodyRateCmd(specific_force, -eR);
+  const Eigen::Vector3d omega_ref =
+      referenceBodyRateFromForce(specific_force, closedLoopSpecificForceDerivative(thrust_accel), mavYaw_, 0.0);
+  return computeCascadedBodyRateCmd(specific_force, -eR, omega_ref, thrust_accel);
 }
 
 Eigen::Vector4d geometricCtrl::controllerJohnson() {
@@ -730,9 +971,13 @@ Eigen::Vector4d geometricCtrl::controllerJohnson() {
   // the torque law by body-rate feedback on r.
   const Eigen::Vector3d aCmd = outerLoopAcceleration();
   const Eigen::Vector3d specific_force = aCmd - gravity_;
+  const double thrust_accel = specific_force.norm();
   const Eigen::Vector4d qd = acc2quaternion(specific_force, mavYaw_);
-  const Eigen::Vector3d r = logSO3(quat2RotMatrix(mavAtt_).transpose() * quat2RotMatrix(qd));
-  return computeCascadedBodyRateCmd(specific_force, r);
+  const Eigen::Vector3d r = johnsonLogSO3(quat2RotMatrix(mavAtt_).transpose() * quat2RotMatrix(qd));
+  const Eigen::Vector3d omega_ref =
+      referenceBodyRateFromForce(specific_force, closedLoopSpecificForceDerivative(thrust_accel), mavYaw_, 0.0);
+  return computeCascadedBodyRateCmd(specific_force, Eigen::Vector3d::Zero(),
+                                    omega_ref + johnsonAttitudeRateFeedback(r), thrust_accel);
 }
 
 Eigen::Vector4d geometricCtrl::controllerSunDFBC() {
@@ -749,9 +994,12 @@ Eigen::Vector4d geometricCtrl::controllerSunDFBC() {
   // explicit acceleration command is mapped to Rd, thrust, and body rates.
   const Eigen::Vector3d accD = outerLoopAcceleration();
   const Eigen::Vector3d specific_force = accD - gravity_;
+  const double thrust_accel = specific_force.norm();
   const Eigen::Vector4d qd = acc2quaternion(specific_force, mavYaw_);
   const Eigen::Vector3d qErr = quaternionAttitudeError(mavAtt_, qd);
-  return computeCascadedBodyRateCmd(specific_force, qErr);
+  const Eigen::Vector3d omega_ref =
+      referenceBodyRateFromForce(specific_force, closedLoopSpecificForceDerivative(thrust_accel), mavYaw_, 0.0);
+  return computeCascadedBodyRateCmd(specific_force, qErr, omega_ref, thrust_accel);
 }
 
 Eigen::Vector4d geometricCtrl::controllerSunDFBCINDI() {
@@ -762,14 +1010,15 @@ Eigen::Vector4d geometricCtrl::controllerSunDFBCINDI() {
   //   allocation state.
   //
   // ROS/MAVROS adaptation: actuator/moment INDI is not available through the
-  // body-rate interface. Keep the translational acceleration INDI only:
-  //   accCmd = accD + Kindi*(accD-accF).
+  // body-rate interface. Keep translational acceleration INDI only, using the
+  // previous applied thrust specific-force vector as the incremental baseline.
   const Eigen::Vector3d accD = outerLoopAcceleration();
-  const Eigen::Vector3d accCmd = accD + accelerationIndiCorrection(accD);
-  const Eigen::Vector3d specific_force = accCmd - gravity_;
+  const Eigen::Vector3d specific_force = accelerationIndiSpecificForce(accD);
+  const double thrust_accel = specific_force.norm();
   const Eigen::Vector4d qd = acc2quaternion(specific_force, mavYaw_);
   const Eigen::Vector3d qErr = quaternionAttitudeError(mavAtt_, qd);
-  return computeCascadedBodyRateCmd(specific_force, qErr);
+  const Eigen::Vector3d omega_ref = geometricIndiReferenceBodyRate(specific_force);
+  return computeCascadedBodyRateCmd(specific_force, qErr, omega_ref, thrust_accel);
 }
 
 Eigen::Vector4d geometricCtrl::controllerTal() {
@@ -786,11 +1035,12 @@ Eigen::Vector4d geometricCtrl::controllerTal() {
   // ROS/MAVROS adaptation: keep Tal's acceleration-feedback INDI outer loop;
   // PX4 handles the body-rate inner loop, so tauCmd is not produced here.
   const Eigen::Vector3d aNominal = outerLoopAcceleration();
-  const Eigen::Vector3d aCmd = aNominal + accelerationIndiCorrection(aNominal);
-  const Eigen::Vector3d specific_force = aCmd - gravity_;
+  const Eigen::Vector3d specific_force = accelerationIndiSpecificForce(aNominal);
+  const double thrust_accel = specific_force.norm();
   const Eigen::Vector4d qd = acc2quaternion(specific_force, mavYaw_);
   const Eigen::Vector3d qErr = quaternionAttitudeError(mavAtt_, qd);
-  return computeCascadedBodyRateCmd(specific_force, qErr);
+  const Eigen::Vector3d omega_ref = geometricIndiReferenceBodyRate(specific_force);
+  return computeCascadedBodyRateCmd(specific_force, qErr, omega_ref, thrust_accel);
 }
 
 Eigen::Vector4d geometricCtrl::controllerGeometricINDI() {
@@ -809,19 +1059,17 @@ Eigen::Vector4d geometricCtrl::controllerGeometricINDI() {
   // ROS/MAVROS adaptation: retain GINDI's translational increment and map the
   // resulting thrust vector to a cascaded body-rate command.
   const Eigen::Vector3d aCmd = outerLoopAcceleration();
-  const Eigen::Vector3d aIndi = aCmd + accelerationIndiCorrection(aCmd);
-  const Eigen::Vector3d specific_force = aIndi - gravity_;
+  const Eigen::Vector3d specific_force = accelerationIndiSpecificForce(aCmd);
+  const double thrust_accel = specific_force.norm();
   const Eigen::Vector4d qd = acc2quaternion(specific_force, mavYaw_);
   const Eigen::Vector3d rErr = logSO3(quat2RotMatrix(mavAtt_).transpose() * quat2RotMatrix(qd));
-  return computeCascadedBodyRateCmd(specific_force, rErr);
+  const Eigen::Vector3d omega_ref = geometricIndiReferenceBodyRate(specific_force);
+  return computeCascadedBodyRateCmd(specific_force, rErr, omega_ref, thrust_accel);
 }
 
 Eigen::Vector3d geometricCtrl::poscontroller(const Eigen::Vector3d &pos_error, const Eigen::Vector3d &vel_error) {
   Eigen::Vector3d a_fb =
       -(Kpos_.asDiagonal() * pos_error) - (Kvel_.asDiagonal() * vel_error);  // feedback term for trajectory error
-
-  if (a_fb.norm() > max_fb_acc_)
-    a_fb = (max_fb_acc_ / a_fb.norm()) * a_fb;  // Clip acceleration if reference is too large
 
   return a_fb;
 }
@@ -865,13 +1113,13 @@ void geometricCtrl::dynamicReconfigureCallback(geometric_controller::GeometricCo
                                                uint32_t level) {
   if (controller_type_ != config.controllerName) {
     controller_type_ = config.controllerName;
-    desired_att_initialized_ = false;
     accel_indi_initialized_ = false;
+    accel_filter_.initialized = false;
+    thrust_accel_filter_.initialized = false;
+    thrust_accel_initialized_ = false;
+    last_indi_correction_.setZero();
+    previous_accel_sample_counter_ = 0;
     ROS_INFO("Reconfigure request : controllerName = %s ", controllerName());
-  }
-  if (max_fb_acc_ != config.max_acc) {
-    max_fb_acc_ = config.max_acc;
-    ROS_INFO("Reconfigure request : max_acc = %.2f ", config.max_acc);
   }
   if (attctrl_tau_ != config.attctrl_constant) {
     attctrl_tau_ = config.attctrl_constant;
@@ -924,18 +1172,33 @@ void geometricCtrl::dynamicReconfigureCallback(geometric_controller::GeometricCo
     KR_z_ = config.KR_z;
     ROS_INFO("Reconfigure request : KR_z = %.2f ", config.KR_z);
   }
+  if (KOmega_x_ != config.KOmega_x) {
+    KOmega_x_ = config.KOmega_x;
+    ROS_INFO("Reconfigure request : KOmega_x = %.2f ", config.KOmega_x);
+  }
+  if (KOmega_y_ != config.KOmega_y) {
+    KOmega_y_ = config.KOmega_y;
+    ROS_INFO("Reconfigure request : KOmega_y = %.2f ", config.KOmega_y);
+  }
+  if (KOmega_z_ != config.KOmega_z) {
+    KOmega_z_ = config.KOmega_z;
+    ROS_INFO("Reconfigure request : KOmega_z = %.2f ", config.KOmega_z);
+  }
   if (indi_accel_feedback_ != config.indiAccelFeedback) {
     indi_accel_feedback_ = config.indiAccelFeedback;
+    accel_indi_initialized_ = false;
+    accel_filter_.initialized = false;
+    thrust_accel_filter_.initialized = false;
+    last_indi_correction_.setZero();
     ROS_INFO("Reconfigure request : indiAccelFeedback = %.2f ", config.indiAccelFeedback);
   }
   if (indi_filter_cutoff_hz_ != config.indiFilterCutoffHz) {
     indi_filter_cutoff_hz_ = config.indiFilterCutoffHz;
     accel_indi_initialized_ = false;
+    accel_filter_.initialized = false;
+    thrust_accel_filter_.initialized = false;
+    last_indi_correction_.setZero();
     ROS_INFO("Reconfigure request : indiFilterCutoffHz = %.2f ", config.indiFilterCutoffHz);
-  }
-  if (indi_max_correction_acc_ != config.indiMaxCorrectionAcc) {
-    indi_max_correction_acc_ = config.indiMaxCorrectionAcc;
-    ROS_INFO("Reconfigure request : indiMaxCorrectionAcc = %.2f ", config.indiMaxCorrectionAcc);
   }
   updateControllerGains();
 }

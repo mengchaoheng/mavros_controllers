@@ -141,9 +141,8 @@ par.traj.fast_circle.omega.range = [1.5, 3.5];   % start/end angular frequency [
 
 % controller
 % "geometric", "lee", "johnson", "px4_iris"
-% "sun_dfbc", "sun_dfbc_indi"
 % "lu", "sun_nmpc", "sun_nmpc_indi"
-% "tal", "geometric_indi"
+% "geometric_indi"
 par.controllerName = "johnson";
 % Shared acceleration-level gains, using Sun et al. Table I DFBC values as
 % the benchmark default. Kp/Kv command linear acceleration; KR/KOmega

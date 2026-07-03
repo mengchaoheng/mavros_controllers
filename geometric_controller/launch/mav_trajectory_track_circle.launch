@@ -16,7 +16,6 @@
           <remap from="command/bodyrate_command" to="/mavros/setpoint_raw/attitude"/>
           <param name="ctrl_mode" value="$(arg command_input)" />
           <param name="enable_sim" value="$(arg gazebo_simulation)" />
-          <param name="max_acc" value="10.0" />
           <!--Params specific for Iris copter-->
           <param name="KR_x" value="12.0"/>
           <param name="KR_y" value="12.0"/>
@@ -35,7 +34,7 @@
         <param name="trajName" value="1" />
         <param name="shapeOmega" value="1.2" />
         <param name="initpos_z" value="2.0" />
-        <param name="reference_type" value="2" />
+        <param name="reference_type" value="1" />
   </node>
 
   <include file="$(find mavros)/launch/node.launch">

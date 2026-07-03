@@ -341,6 +341,66 @@ Eigen::Vector3d shapetrajectory::getAcceleration(double time) {
   return acceleration;
 }
 
+Eigen::Vector3d shapetrajectory::getJerk(double time) {
+  Eigen::Vector3d jerk;
+  double theta;
+  const double omega = traj_omega_;
+
+  switch (type_) {
+    case TRAJ_CIRCLE:
+      jerk = traj_omega_ * traj_axis_.cross(getAcceleration(time));
+      break;
+    case TRAJ_LAMNISCATE:
+      theta = phase_shift_ + traj_omega_ * time;
+      jerk = std::pow(traj_omega_, 3) *
+             (std::sin(theta) * traj_radial_ -
+              4.0 * std::cos(2.0 * theta) * traj_axis_.cross(traj_radial_));
+      break;
+    case TRAJ_STATIONARY:
+      jerk << 0.0, 0.0, 0.0;
+      break;
+    default:
+      jerk << 0.0, 0.0, 0.0;
+      break;
+    case TRAJ_FIGURE8_HORIZONTAL:
+      theta = params_.figure8_horizontal_theta0 + phase_shift_ + omega * time;
+      jerk << -params_.figure8_horizontal_Ax * std::pow(omega, 3.0) * std::cos(theta),
+          -8.0 * params_.figure8_horizontal_Ay * std::pow(omega, 3.0) * std::cos(2.0 * theta), 0.0;
+      break;
+    case TRAJ_FIGURE8_VERTICAL:
+      theta = params_.figure8_vertical_theta0 + phase_shift_ + omega * time;
+      jerk << 0.0, -params_.figure8_vertical_Ay * std::pow(omega, 3.0) * std::cos(theta),
+          -8.0 * params_.figure8_vertical_Az * std::pow(omega, 3.0) * std::cos(2.0 * theta);
+      break;
+    case TRAJ_HELIX_FLIP:
+      theta = params_.helix_flip_theta0 + phase_shift_ + omega * time;
+      jerk << 0.0, -params_.helix_flip_Ay * std::pow(omega, 3.0) * std::cos(theta),
+          -params_.helix_flip_Az * std::pow(omega, 3.0) * std::sin(theta);
+      break;
+    case TRAJ_HELIX_FLIP_Y:
+      theta = params_.helix_flip_y_theta0 + phase_shift_ + omega * time;
+      jerk << -params_.helix_flip_y_Ax * std::pow(omega, 3.0) * std::cos(theta), 0.0,
+          -params_.helix_flip_y_Az * std::pow(omega, 3.0) * std::sin(theta);
+      break;
+    case TRAJ_FLIP_LOOP_SINE:
+      theta = params_.flip_loop_sine_theta0 + phase_shift_ + omega * time;
+      jerk << 0.0, -params_.flip_loop_sine_Ay * std::pow(omega, 3.0) * std::cos(theta),
+          -params_.flip_loop_sine_Az * std::pow(omega, 3.0) * std::sin(theta);
+      break;
+    case TRAJ_FAST_CIRCLE:
+      theta = params_.fast_circle_theta0 + phase_shift_ + omega * time;
+      jerk << params_.fast_circle_Ax * std::pow(omega, 3.0) * std::sin(theta),
+          -params_.fast_circle_Ay * std::pow(omega, 3.0) * std::cos(theta), 0.0;
+      break;
+    case TRAJ_RACE_TRACK_C:
+      theta = M_PI / 2.0 + phase_shift_ + omega * time;
+      jerk << 8.75 * std::pow(omega, 3.0) * std::sin(theta),
+          -4.50 * std::pow(omega, 3.0) * std::cos(theta), 0.0;
+      break;
+  }
+  return jerk;
+}
+
 nav_msgs::Path shapetrajectory::getSegment() {
   Eigen::Vector3d targetPosition;
   Eigen::Vector4d targetOrientation;
