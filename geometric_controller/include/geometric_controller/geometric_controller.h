@@ -47,6 +47,7 @@
 
 #include <stdio.h>
 #include <cstdlib>
+#include <memory>
 #include <sstream>
 #include <string>
 
@@ -71,7 +72,8 @@
 #include <trajectory_msgs/MultiDOFJointTrajectoryPoint.h>
 
 #include "geometric_controller/common.h"
-#include "geometric_controller/control.h"
+#include "geometric_controller/controller_base.h"
+#include "geometric_controller/controller_types.h"
 
 #define ERROR_QUATERNION 1
 #define ERROR_GEOMETRIC 2
@@ -121,9 +123,9 @@ class geometricCtrl {
   bool landing_commanded_{false};
   bool sim_enable_;
   bool velocity_yaw_;
+  int controller_type_;
   double kp_rot_, kd_rot_;
   double reference_request_dt_;
-  Eigen::Vector3d attctrl_tau_;
   double norm_thrust_const_, norm_thrust_offset_;
   double max_fb_acc_;
   double cmdloop_rate_;
@@ -140,7 +142,7 @@ class geometricCtrl {
   Eigen::Vector3d gravity_{Eigen::Vector3d(0.0, 0.0, -9.8)};
   Eigen::Vector4d mavAtt_, q_des;
   Eigen::Vector4d cmdBodyRate_;  //{wx, wy, wz, Thrust}
-  Eigen::Vector3d Kpos_, Kvel_, D_;
+  Eigen::Vector3d D_;
   double Kpos_x_, Kpos_y_, Kpos_z_, Kvel_x_, Kvel_y_, Kvel_z_;
   double Krot_r_, Krot_p_, Krot_y_;
   int posehistory_window_;
@@ -150,8 +152,11 @@ class geometricCtrl {
   void pubReferencePose(const Eigen::Vector3d &target_position, const Eigen::Vector4d &target_attitude);
   void pubPoseHistory();
   void pubSystemStatus();
-  void updateAttitudeControlTimeConstant();
   void appendPoseHistory();
+  void selectActiveController(int controller_type);
+  geometric_controller::VehicleState getVehicleState() const;
+  geometric_controller::FlatReference getFlatReference();
+  geometric_controller::ControllerParams getControllerParams() const;
   void odomCallback(const nav_msgs::OdometryConstPtr &odomMsg);
   void targetCallback(const geometry_msgs::TwistStamped &msg);
   void flattargetCallback(const controller_msgs::FlatTarget &msg);
@@ -166,10 +171,6 @@ class geometricCtrl {
   bool ctrltriggerCallback(std_srvs::SetBool::Request &req, std_srvs::SetBool::Response &res);
   bool landCallback(std_srvs::SetBool::Request &request, std_srvs::SetBool::Response &response);
   geometry_msgs::PoseStamped vector3d2PoseStampedMsg(Eigen::Vector3d &position, Eigen::Vector4d &orientation);
-  void computeBodyRateCmd(Eigen::Vector4d &bodyrate_cmd, const Eigen::Vector3d &target_acc);
-  Eigen::Vector3d controlPosition(const Eigen::Vector3d &target_pos, const Eigen::Vector3d &target_vel,
-                                  const Eigen::Vector3d &target_acc);
-  Eigen::Vector3d poscontroller(const Eigen::Vector3d &pos_error, const Eigen::Vector3d &vel_error);
   void updateCommandLoopRate(double rate_hz);
   Eigen::Vector4d attcontroller(const Eigen::Vector4d &ref_att, const Eigen::Vector3d &ref_acc,
                                 Eigen::Vector4d &curr_att);
@@ -187,7 +188,8 @@ class geometricCtrl {
   };
   geometry_msgs::Pose home_pose_;
   bool received_home_pose;
-  std::shared_ptr<Control> controller_;
+  geometric_controller::ControllerType active_controller_type_;
+  std::shared_ptr<geometric_controller::ControllerBase> active_controller_;
 
  public:
   void dynamicReconfigureCallback(geometric_controller::GeometricControllerConfig &config, uint32_t level);

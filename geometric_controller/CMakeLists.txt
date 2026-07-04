@@ -36,6 +36,14 @@ include_directories(
 
 add_library(${PROJECT_NAME}
   src/geometric_controller.cpp 
+  src/legacy_geometric_controller.cpp
+  src/main_controller_math.cpp
+  src/main_geometric_controller.cpp
+  src/main_lee_controller.cpp
+  src/main_johnson_controller.cpp
+  src/main_sun_dfbc_controller.cpp
+  src/main_tal_controller.cpp
+  src/main_geometric_indi_controller.cpp
   src/nonlinear_attitude_control.cpp
   src/nonlinear_geometric_control.cpp
   src/jerk_tracking_control.cpp

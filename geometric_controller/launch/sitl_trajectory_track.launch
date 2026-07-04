@@ -18,6 +18,7 @@
   <arg name="respawn_mavros" default="false" />
 
   <arg name="cmdloop_rate" default="250.0" />
+  <arg name="controller_type" default="0" />
   <arg name="max_acc" default="10.0" />
   <arg name="KR_r" default="4.0" />
   <arg name="KR_p" default="4.0" />
@@ -110,6 +111,7 @@
         <param name="ctrl_mode" value="$(arg command_input)" />
         <param name="enable_sim" value="$(arg gazebo_simulation)" />
         <param name="enable_gazebo_state" value="true"/>
+        <param name="controller_type" value="$(arg controller_type)" />
         <param name="cmdloop_rate" value="$(arg cmdloop_rate)" />
         <param name="max_acc" value="$(arg max_acc)" />
         <param name="KR_r" value="$(arg KR_r)"/>

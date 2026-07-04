@@ -39,9 +39,13 @@
  */
 
 #include "geometric_controller/geometric_controller.h"
-#include "geometric_controller/jerk_tracking_control.h"
-#include "geometric_controller/nonlinear_attitude_control.h"
-#include "geometric_controller/nonlinear_geometric_control.h"
+#include "geometric_controller/legacy_geometric_controller.h"
+#include "geometric_controller/main_geometric_indi_controller.h"
+#include "geometric_controller/main_geometric_controller.h"
+#include "geometric_controller/main_johnson_controller.h"
+#include "geometric_controller/main_lee_controller.h"
+#include "geometric_controller/main_sun_dfbc_controller.h"
+#include "geometric_controller/main_tal_controller.h"
 
 #include <algorithm>
 #include <cmath>
@@ -57,6 +61,14 @@ double sanitizeCmdloopRate(double rate) {
     return 250.0;
   }
   return std::max(20.0, std::min(500.0, rate));
+}
+
+int sanitizeControllerType(int controller_type) {
+  if (controller_type < static_cast<int>(geometric_controller::ControllerType::LEGACY_GEOMETRIC) ||
+      controller_type > static_cast<int>(geometric_controller::ControllerType::MAIN_GEOMETRIC_INDI)) {
+    return static_cast<int>(geometric_controller::ControllerType::LEGACY_GEOMETRIC);
+  }
+  return controller_type;
 }
 }  // namespace
 
@@ -96,6 +108,9 @@ geometricCtrl::geometricCtrl(const ros::NodeHandle &nh, const ros::NodeHandle &n
 
   nh_private_.param<string>("mavname", mav_name_, "iris");
   nh_private_.param<int>("ctrl_mode", ctrl_mode_, ERROR_QUATERNION);
+  nh_private_.param<int>("controller_type", controller_type_,
+                         static_cast<int>(geometric_controller::ControllerType::LEGACY_GEOMETRIC));
+  controller_type_ = sanitizeControllerType(controller_type_);
   nh_private_.param<bool>("enable_sim", sim_enable_, true);
   nh_private_.param<bool>("velocity_yaw", velocity_yaw_, false);
   nh_private_.param<double>("max_acc", max_fb_acc_, 10.0);
@@ -127,29 +142,10 @@ geometricCtrl::geometricCtrl(const ros::NodeHandle &nh, const ros::NodeHandle &n
   targetVel_ << 0.0, 0.0, 0.0;
   mavPos_ << 0.0, 0.0, 0.0;
   mavVel_ << 0.0, 0.0, 0.0;
-  Kpos_ << -Kpos_x_, -Kpos_y_, -Kpos_z_;
-  Kvel_ << -Kvel_x_, -Kvel_y_, -Kvel_z_;
-  updateAttitudeControlTimeConstant();
-
-  bool jerk_enabled = false;
-  if (!jerk_enabled) {
-    if (ctrl_mode_ == ERROR_GEOMETRIC) {
-      controller_ = std::make_shared<NonlinearGeometricControl>(attctrl_tau_);
-    } else {
-      controller_ = std::make_shared<NonlinearAttitudeControl>(attctrl_tau_);
-    }
-  } else {
-    controller_ = std::make_shared<JerkTrackingControl>();
-  }
+  selectActiveController(controller_type_);
 }
 geometricCtrl::~geometricCtrl() {
   // Destructor
-}
-
-void geometricCtrl::updateAttitudeControlTimeConstant() {
-  constexpr double kMinAttitudeGain = 1e-6;
-  attctrl_tau_ << 1.0 / std::max(Krot_r_, kMinAttitudeGain), 1.0 / std::max(Krot_p_, kMinAttitudeGain),
-      1.0 / std::max(Krot_y_, kMinAttitudeGain);
 }
 
 void geometricCtrl::updateCommandLoopRate(double rate_hz) {
@@ -160,6 +156,98 @@ void geometricCtrl::updateCommandLoopRate(double rate_hz) {
   cmdloop_rate_ = sanitized_rate;
   cmdloop_timer_.setPeriod(ros::Duration(1.0 / cmdloop_rate_), true);
   ROS_INFO("Reconfigure request : cmdloop_rate = %.4f Hz", cmdloop_rate_);
+}
+
+void geometricCtrl::selectActiveController(int controller_type) {
+  const int sanitized_type = sanitizeControllerType(controller_type);
+  controller_type_ = sanitized_type;
+  const auto requested_type = static_cast<geometric_controller::ControllerType>(sanitized_type);
+
+  switch (requested_type) {
+    case geometric_controller::ControllerType::LEGACY_GEOMETRIC:
+      active_controller_type_ = requested_type;
+      active_controller_ = std::make_shared<geometric_controller::LegacyGeometricController>();
+      break;
+    case geometric_controller::ControllerType::MAIN_GEOMETRIC:
+      active_controller_type_ = requested_type;
+      active_controller_ = std::make_shared<geometric_controller::MainGeometricController>();
+      break;
+    case geometric_controller::ControllerType::MAIN_LEE:
+      active_controller_type_ = requested_type;
+      active_controller_ = std::make_shared<geometric_controller::MainLeeController>();
+      break;
+    case geometric_controller::ControllerType::MAIN_JOHNSON:
+      active_controller_type_ = requested_type;
+      active_controller_ = std::make_shared<geometric_controller::MainJohnsonController>();
+      break;
+    case geometric_controller::ControllerType::MAIN_SUN_DFBC:
+      active_controller_type_ = requested_type;
+      active_controller_ = std::make_shared<geometric_controller::MainSunDFBCController>();
+      break;
+    case geometric_controller::ControllerType::MAIN_SUN_DFBC_INDI:
+      active_controller_type_ = requested_type;
+      active_controller_ = std::make_shared<geometric_controller::MainSunDFBCController>(true);
+      break;
+    case geometric_controller::ControllerType::MAIN_TAL:
+      active_controller_type_ = requested_type;
+      active_controller_ = std::make_shared<geometric_controller::MainTalController>();
+      break;
+    case geometric_controller::ControllerType::MAIN_GEOMETRIC_INDI:
+      active_controller_type_ = requested_type;
+      active_controller_ = std::make_shared<geometric_controller::MainGeometricINDIController>();
+      break;
+    default:
+      ROS_WARN("Controller type %d is reserved but not implemented yet. Falling back to legacy_geometric.",
+               sanitized_type);
+      active_controller_type_ = geometric_controller::ControllerType::LEGACY_GEOMETRIC;
+      active_controller_ = std::make_shared<geometric_controller::LegacyGeometricController>();
+      controller_type_ = static_cast<int>(active_controller_type_);
+      break;
+  }
+
+  active_controller_->reset(getVehicleState());
+  ROS_INFO("Active controller: %s", active_controller_->name().c_str());
+}
+
+geometric_controller::VehicleState geometricCtrl::getVehicleState() const {
+  geometric_controller::VehicleState state;
+  state.position = mavPos_;
+  state.velocity = mavVel_;
+  state.body_rate = mavRate_;
+  state.attitude = mavAtt_;
+  state.yaw = mavYaw_;
+  return state;
+}
+
+geometric_controller::FlatReference geometricCtrl::getFlatReference() {
+  if (velocity_yaw_) {
+    mavYaw_ = getVelocityYaw(mavVel_);
+  }
+
+  geometric_controller::FlatReference reference;
+  reference.position = targetPos_;
+  reference.velocity = targetVel_;
+  reference.acceleration = targetAcc_;
+  reference.jerk = targetJerk_;
+  reference.snap = targetSnap_;
+  reference.yaw = mavYaw_;
+  return reference;
+}
+
+geometric_controller::ControllerParams geometricCtrl::getControllerParams() const {
+  geometric_controller::ControllerParams params;
+  params.ctrl_mode = ctrl_mode_;
+  params.feedthrough_enable = feedthrough_enable_;
+  params.velocity_yaw = velocity_yaw_;
+  params.gravity = gravity_;
+  params.drag = D_;
+  params.Kp << Kpos_x_, Kpos_y_, Kpos_z_;
+  params.Kv << Kvel_x_, Kvel_y_, Kvel_z_;
+  params.KR << Krot_r_, Krot_p_, Krot_y_;
+  params.max_feedback_acc = max_fb_acc_;
+  params.normalizedthrust_constant = norm_thrust_const_;
+  params.normalizedthrust_offset = norm_thrust_offset_;
+  return params;
 }
 
 void geometricCtrl::targetCallback(const geometry_msgs::TwistStamped &msg) {
@@ -274,15 +362,17 @@ void geometricCtrl::cmdloopCallback(const ros::TimerEvent &event) {
       break;
 
     case MISSION_EXECUTION: {
-      Eigen::Vector3d desired_acc;
-      if (feedthrough_enable_) {
-        desired_acc = targetAcc_;
-      } else {
-        desired_acc = controlPosition(targetPos_, targetVel_, targetAcc_);
-      }
-      computeBodyRateCmd(cmdBodyRate_, desired_acc);
-      pubReferencePose(targetPos_, q_des);
-      pubRateCommands(cmdBodyRate_, q_des);
+      const geometric_controller::VehicleState state = getVehicleState();
+      const geometric_controller::FlatReference reference = getFlatReference();
+      const geometric_controller::ControllerParams params = getControllerParams();
+      const geometric_controller::ControllerCommand command =
+          active_controller_->update(state, reference, params, event.current_real.toSec() - event.last_real.toSec());
+
+      q_des = command.attitude;
+      cmdBodyRate_.head(3) = command.body_rate;
+      cmdBodyRate_(3) = command.thrust;
+      pubReferencePose(command.reference_position, command.attitude);
+      pubRateCommands(cmdBodyRate_, command.attitude);
       appendPoseHistory();
       pubPoseHistory();
       break;
@@ -406,55 +496,6 @@ geometry_msgs::PoseStamped geometricCtrl::vector3d2PoseStampedMsg(Eigen::Vector3
   return encode_msg;
 }
 
-Eigen::Vector3d geometricCtrl::controlPosition(const Eigen::Vector3d &target_pos, const Eigen::Vector3d &target_vel,
-                                               const Eigen::Vector3d &target_acc) {
-  /// Compute BodyRate commands using differential flatness
-  /// Controller based on Faessler 2017
-  const Eigen::Vector3d a_ref = target_acc;
-  if (velocity_yaw_) {
-    mavYaw_ = getVelocityYaw(mavVel_);
-  }
-
-  const Eigen::Vector4d q_ref = acc2quaternion(a_ref - gravity_, mavYaw_);
-  const Eigen::Matrix3d R_ref = quat2RotMatrix(q_ref);
-
-  const Eigen::Vector3d pos_error = mavPos_ - target_pos;
-  const Eigen::Vector3d vel_error = mavVel_ - target_vel;
-
-  // Position Controller
-  const Eigen::Vector3d a_fb = poscontroller(pos_error, vel_error);
-
-  // Rotor Drag compensation
-  const Eigen::Vector3d a_rd = R_ref * D_.asDiagonal() * R_ref.transpose() * target_vel;  // Rotor drag
-
-  // Reference acceleration
-  const Eigen::Vector3d a_des = a_fb + a_ref - a_rd - gravity_;
-
-  return a_des;
-}
-
-void geometricCtrl::computeBodyRateCmd(Eigen::Vector4d &bodyrate_cmd, const Eigen::Vector3d &a_des) {
-  // Reference attitude
-  q_des = acc2quaternion(a_des, mavYaw_);
-
-  controller_->Update(mavAtt_, q_des, a_des, targetJerk_);  // Calculate BodyRate
-  bodyrate_cmd.head(3) = controller_->getDesiredRate();
-  double thrust_command = controller_->getDesiredThrust().z();
-  bodyrate_cmd(3) =
-      std::max(0.0, std::min(1.0, norm_thrust_const_ * thrust_command +
-                                      norm_thrust_offset_));  // Calculate thrustcontroller_->getDesiredThrust()(3);
-}
-
-Eigen::Vector3d geometricCtrl::poscontroller(const Eigen::Vector3d &pos_error, const Eigen::Vector3d &vel_error) {
-  Eigen::Vector3d a_fb =
-      Kpos_.asDiagonal() * pos_error + Kvel_.asDiagonal() * vel_error;  // feedforward term for trajectory error
-
-  if (a_fb.norm() > max_fb_acc_)
-    a_fb = (max_fb_acc_ / a_fb.norm()) * a_fb;  // Clip acceleration if reference is too large
-
-  return a_fb;
-}
-
 Eigen::Vector4d geometricCtrl::acc2quaternion(const Eigen::Vector3d &vector_acc, const double &yaw) {
   Eigen::Vector4d quat;
   Eigen::Vector3d zb_des, yb_des, xb_des, proj_xb_des;
@@ -482,8 +523,7 @@ bool geometricCtrl::ctrltriggerCallback(std_srvs::SetBool::Request &req, std_srv
 
 void geometricCtrl::dynamicReconfigureCallback(geometric_controller::GeometricControllerConfig &config,
                                                uint32_t level) {
-  bool attitude_gain_changed = false;
-
+  config.controller_type = sanitizeControllerType(config.controller_type);
   config.cmdloop_rate = roundToFourDecimals(sanitizeCmdloopRate(config.cmdloop_rate));
   config.max_acc = roundToFourDecimals(config.max_acc);
   config.normalizedthrust_constant = roundToFourDecimals(config.normalizedthrust_constant);
@@ -497,6 +537,11 @@ void geometricCtrl::dynamicReconfigureCallback(geometric_controller::GeometricCo
   config.KR_r = roundToFourDecimals(config.KR_r);
   config.KR_p = roundToFourDecimals(config.KR_p);
   config.KR_y = roundToFourDecimals(config.KR_y);
+
+  if (controller_type_ != config.controller_type) {
+    selectActiveController(config.controller_type);
+    config.controller_type = controller_type_;
+  }
 
   updateCommandLoopRate(config.cmdloop_rate);
 
@@ -538,24 +583,15 @@ void geometricCtrl::dynamicReconfigureCallback(geometric_controller::GeometricCo
   }
   if (Krot_r_ != config.KR_r) {
     Krot_r_ = config.KR_r;
-    attitude_gain_changed = true;
     ROS_INFO("Reconfigure request : KR_r  = %.2f  ", config.KR_r);
   }
   if (Krot_p_ != config.KR_p) {
     Krot_p_ = config.KR_p;
-    attitude_gain_changed = true;
     ROS_INFO("Reconfigure request : KR_p  = %.2f  ", config.KR_p);
   }
   if (Krot_y_ != config.KR_y) {
     Krot_y_ = config.KR_y;
-    attitude_gain_changed = true;
     ROS_INFO("Reconfigure request : KR_y  = %.2f  ", config.KR_y);
   }
 
-  Kpos_ << -Kpos_x_, -Kpos_y_, -Kpos_z_;
-  Kvel_ << -Kvel_x_, -Kvel_y_, -Kvel_z_;
-  if (attitude_gain_changed) {
-    updateAttitudeControlTimeConstant();
-    controller_->setAttitudeControlTimeConstant(attctrl_tau_);
-  }
 }

@@ -11,6 +11,7 @@
   <arg name="fcu_protocol" default="v2.0" />
   <arg name="respawn_mavros" default="false" />
   <arg name="cmdloop_rate" default="250.0" />
+  <arg name="controller_type" default="0" />
   <arg name="trajectory_yaw_lock" default="true" />
   <arg name="trajectory_yaw_fixed" default="0.0" />
   
@@ -19,6 +20,7 @@
           <remap from="command/bodyrate_command" to="/mavros/setpoint_raw/attitude"/>
           <param name="ctrl_mode" value="$(arg command_input)" />
           <param name="enable_sim" value="$(arg gazebo_simulation)" />
+          <param name="controller_type" value="$(arg controller_type)" />
           <param name="cmdloop_rate" value="$(arg cmdloop_rate)" />
           <param name="max_acc" value="10.0" />
           <!--Params specific for Iris copter-->
