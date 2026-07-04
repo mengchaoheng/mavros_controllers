@@ -46,13 +46,14 @@
 
 class NonlinearAttitudeControl : public Control {
  public:
-  NonlinearAttitudeControl(double attctrl_tau);
+  NonlinearAttitudeControl(const Eigen::Vector3d &attctrl_tau);
   virtual ~NonlinearAttitudeControl();
   void Update(Eigen::Vector4d &curr_att, const Eigen::Vector4d &ref_att, const Eigen::Vector3d &ref_acc,
               const Eigen::Vector3d &ref_jerk) override;
+  void setAttitudeControlTimeConstant(const Eigen::Vector3d &attctrl_tau) override { attctrl_tau_ = attctrl_tau; }
 
  private:
-  double attctrl_tau_{1.0};
+  Eigen::Vector3d attctrl_tau_{Eigen::Vector3d::Ones()};
 };
 
 #endif

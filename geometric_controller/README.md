@@ -12,13 +12,16 @@ Trajectory trackking controller using [mavros](https://github.com/mavlink/mavros
 - /geometric_controller/ctrl_mode (default: MODE_BODYRATE)
 - /geometric_controller/enable_sim (default: true)
 - /geometric_controller/enable_gazebo_state (default: false)
-- /geometric_controller/max_acc (default: 7.0)
+- /geometric_controller/max_acc (default: 10.0)
 - /geometric_controller/yaw_heading (default: 0.0)
 - /geometric_controller/drag_dx (default: 0.0)
 - /geometric_controller/drag_dy (default: 0.0)
 - /geometric_controller/drag_dz (default: 0.0)
-- /geometric_controller/attctrl_constant (default: 0.2)
-- /geometric_controller/normalizedthrust_constant (default: 0.1)
+- /geometric_controller/KR_r (default: 4.0)
+- /geometric_controller/KR_p (default: 4.0)
+- /geometric_controller/KR_y (default: 4.0)
+- /geometric_controller/normalizedthrust_constant (default: 0.0220)
+- /geometric_controller/normalizedthrust_offset (default: 0.0)
 
 
 ## Topics

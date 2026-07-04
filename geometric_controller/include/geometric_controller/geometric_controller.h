@@ -123,6 +123,7 @@ class geometricCtrl {
   bool velocity_yaw_;
   double kp_rot_, kd_rot_;
   double reference_request_dt_;
+  Eigen::Vector3d attctrl_tau_;
   double norm_thrust_const_, norm_thrust_offset_;
   double max_fb_acc_;
 
@@ -140,6 +141,7 @@ class geometricCtrl {
   Eigen::Vector4d cmdBodyRate_;  //{wx, wy, wz, Thrust}
   Eigen::Vector3d Kpos_, Kvel_, D_;
   double Kpos_x_, Kpos_y_, Kpos_z_, Kvel_x_, Kvel_y_, Kvel_z_;
+  double Krot_r_, Krot_p_, Krot_y_;
   int posehistory_window_;
 
   void pubMotorCommands();
@@ -147,6 +149,7 @@ class geometricCtrl {
   void pubReferencePose(const Eigen::Vector3d &target_position, const Eigen::Vector4d &target_attitude);
   void pubPoseHistory();
   void pubSystemStatus();
+  void updateAttitudeControlTimeConstant();
   void appendPoseHistory();
   void odomCallback(const nav_msgs::OdometryConstPtr &odomMsg);
   void targetCallback(const geometry_msgs::TwistStamped &msg);

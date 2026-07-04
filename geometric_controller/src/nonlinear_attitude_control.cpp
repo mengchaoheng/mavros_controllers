@@ -40,7 +40,9 @@
 
 #include "geometric_controller/nonlinear_attitude_control.h"
 
-NonlinearAttitudeControl::NonlinearAttitudeControl(double attctrl_tau) : Control() { attctrl_tau_ = attctrl_tau; }
+NonlinearAttitudeControl::NonlinearAttitudeControl(const Eigen::Vector3d &attctrl_tau) : Control() {
+  attctrl_tau_ = attctrl_tau;
+}
 
 NonlinearAttitudeControl::~NonlinearAttitudeControl() {}
 
@@ -53,9 +55,9 @@ void NonlinearAttitudeControl::Update(Eigen::Vector4d &curr_att, const Eigen::Ve
   const Eigen::Vector4d inverse(1.0, -1.0, -1.0, -1.0);
   const Eigen::Vector4d q_inv = inverse.asDiagonal() * curr_att;
   const Eigen::Vector4d qe = quatMultiplication(q_inv, ref_att);
-  desired_rate_(0) = (2.0 / attctrl_tau_) * std::copysign(1.0, qe(0)) * qe(1);
-  desired_rate_(1) = (2.0 / attctrl_tau_) * std::copysign(1.0, qe(0)) * qe(2);
-  desired_rate_(2) = (2.0 / attctrl_tau_) * std::copysign(1.0, qe(0)) * qe(3);
+  desired_rate_(0) = (2.0 / attctrl_tau_(0)) * std::copysign(1.0, qe(0)) * qe(1);
+  desired_rate_(1) = (2.0 / attctrl_tau_(1)) * std::copysign(1.0, qe(0)) * qe(2);
+  desired_rate_(2) = (2.0 / attctrl_tau_(2)) * std::copysign(1.0, qe(0)) * qe(3);
   const Eigen::Matrix3d rotmat = quat2RotMatrix(curr_att);
   const Eigen::Vector3d zb = rotmat.col(2);
   desired_thrust_(0) = 0.0;

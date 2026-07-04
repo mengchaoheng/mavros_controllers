@@ -43,8 +43,16 @@
 #include "geometric_controller/nonlinear_attitude_control.h"
 #include "geometric_controller/nonlinear_geometric_control.h"
 
+#include <algorithm>
+#include <cmath>
+
 using namespace Eigen;
 using namespace std;
+
+namespace {
+double roundToFourDecimals(double value) { return std::round(value * 10000.0) / 10000.0; }
+}  // namespace
+
 // Constructor
 geometricCtrl::geometricCtrl(const ros::NodeHandle &nh, const ros::NodeHandle &nh_private)
     : nh_(nh), nh_private_(nh_private), node_state(WAITING_FOR_HOME_POSE) {
@@ -81,7 +89,7 @@ geometricCtrl::geometricCtrl(const ros::NodeHandle &nh, const ros::NodeHandle &n
   nh_private_.param<int>("ctrl_mode", ctrl_mode_, ERROR_QUATERNION);
   nh_private_.param<bool>("enable_sim", sim_enable_, true);
   nh_private_.param<bool>("velocity_yaw", velocity_yaw_, false);
-  nh_private_.param<double>("max_acc", max_fb_acc_, 9.0);
+  nh_private_.param<double>("max_acc", max_fb_acc_, 10.0);
   nh_private_.param<double>("yaw_heading", mavYaw_, 0.0);
 
   double dx, dy, dz;
@@ -90,16 +98,17 @@ geometricCtrl::geometricCtrl(const ros::NodeHandle &nh, const ros::NodeHandle &n
   nh_private_.param<double>("drag_dz", dz, 0.0);
   D_ << dx, dy, dz;
 
-  double attctrl_tau;
-  nh_private_.param<double>("attctrl_constant", attctrl_tau, 0.1);
-  nh_private_.param<double>("normalizedthrust_constant", norm_thrust_const_, 0.05);  // 1 / max acceleration
-  nh_private_.param<double>("normalizedthrust_offset", norm_thrust_offset_, 0.1);    // 1 / max acceleration
-  nh_private_.param<double>("Kp_x", Kpos_x_, 8.0);
-  nh_private_.param<double>("Kp_y", Kpos_y_, 8.0);
-  nh_private_.param<double>("Kp_z", Kpos_z_, 10.0);
-  nh_private_.param<double>("Kv_x", Kvel_x_, 1.5);
-  nh_private_.param<double>("Kv_y", Kvel_y_, 1.5);
-  nh_private_.param<double>("Kv_z", Kvel_z_, 3.3);
+  nh_private_.param<double>("normalizedthrust_constant", norm_thrust_const_, 0.0220);
+  nh_private_.param<double>("normalizedthrust_offset", norm_thrust_offset_, 0.0);
+  nh_private_.param<double>("Kp_x", Kpos_x_, 10.0);
+  nh_private_.param<double>("Kp_y", Kpos_y_, 10.0);
+  nh_private_.param<double>("Kp_z", Kpos_z_, 20.0);
+  nh_private_.param<double>("Kv_x", Kvel_x_, 5.0);
+  nh_private_.param<double>("Kv_y", Kvel_y_, 5.0);
+  nh_private_.param<double>("Kv_z", Kvel_z_, 10.0);
+  nh_private_.param<double>("KR_r", Krot_r_, 4.0);
+  nh_private_.param<double>("KR_p", Krot_p_, 4.0);
+  nh_private_.param<double>("KR_y", Krot_y_, 4.0);
   nh_private_.param<int>("posehistory_window", posehistory_window_, 200);
   nh_private_.param<double>("init_pos_x", initTargetPos_x_, 0.0);
   nh_private_.param<double>("init_pos_y", initTargetPos_y_, 0.0);
@@ -111,13 +120,14 @@ geometricCtrl::geometricCtrl(const ros::NodeHandle &nh, const ros::NodeHandle &n
   mavVel_ << 0.0, 0.0, 0.0;
   Kpos_ << -Kpos_x_, -Kpos_y_, -Kpos_z_;
   Kvel_ << -Kvel_x_, -Kvel_y_, -Kvel_z_;
+  updateAttitudeControlTimeConstant();
 
   bool jerk_enabled = false;
   if (!jerk_enabled) {
     if (ctrl_mode_ == ERROR_GEOMETRIC) {
-      controller_ = std::make_shared<NonlinearGeometricControl>(attctrl_tau);
+      controller_ = std::make_shared<NonlinearGeometricControl>(attctrl_tau_);
     } else {
-      controller_ = std::make_shared<NonlinearAttitudeControl>(attctrl_tau);
+      controller_ = std::make_shared<NonlinearAttitudeControl>(attctrl_tau_);
     }
   } else {
     controller_ = std::make_shared<JerkTrackingControl>();
@@ -125,6 +135,12 @@ geometricCtrl::geometricCtrl(const ros::NodeHandle &nh, const ros::NodeHandle &n
 }
 geometricCtrl::~geometricCtrl() {
   // Destructor
+}
+
+void geometricCtrl::updateAttitudeControlTimeConstant() {
+  constexpr double kMinAttitudeGain = 1e-6;
+  attctrl_tau_ << 1.0 / std::max(Krot_r_, kMinAttitudeGain), 1.0 / std::max(Krot_p_, kMinAttitudeGain),
+      1.0 / std::max(Krot_y_, kMinAttitudeGain);
 }
 
 void geometricCtrl::targetCallback(const geometry_msgs::TwistStamped &msg) {
@@ -447,29 +463,77 @@ bool geometricCtrl::ctrltriggerCallback(std_srvs::SetBool::Request &req, std_srv
 
 void geometricCtrl::dynamicReconfigureCallback(geometric_controller::GeometricControllerConfig &config,
                                                uint32_t level) {
+  bool attitude_gain_changed = false;
+
+  config.max_acc = roundToFourDecimals(config.max_acc);
+  config.normalizedthrust_constant = roundToFourDecimals(config.normalizedthrust_constant);
+  config.normalizedthrust_offset = roundToFourDecimals(config.normalizedthrust_offset);
+  config.Kp_x = roundToFourDecimals(config.Kp_x);
+  config.Kp_y = roundToFourDecimals(config.Kp_y);
+  config.Kp_z = roundToFourDecimals(config.Kp_z);
+  config.Kv_x = roundToFourDecimals(config.Kv_x);
+  config.Kv_y = roundToFourDecimals(config.Kv_y);
+  config.Kv_z = roundToFourDecimals(config.Kv_z);
+  config.KR_r = roundToFourDecimals(config.KR_r);
+  config.KR_p = roundToFourDecimals(config.KR_p);
+  config.KR_y = roundToFourDecimals(config.KR_y);
+
   if (max_fb_acc_ != config.max_acc) {
     max_fb_acc_ = config.max_acc;
     ROS_INFO("Reconfigure request : max_acc = %.2f ", config.max_acc);
-  } else if (Kpos_x_ != config.Kp_x) {
+  }
+  if (norm_thrust_const_ != config.normalizedthrust_constant) {
+    norm_thrust_const_ = config.normalizedthrust_constant;
+    ROS_INFO("Reconfigure request : normalizedthrust_constant = %.3f ", config.normalizedthrust_constant);
+  }
+  if (norm_thrust_offset_ != config.normalizedthrust_offset) {
+    norm_thrust_offset_ = config.normalizedthrust_offset;
+    ROS_INFO("Reconfigure request : normalizedthrust_offset = %.3f ", config.normalizedthrust_offset);
+  }
+  if (Kpos_x_ != config.Kp_x) {
     Kpos_x_ = config.Kp_x;
     ROS_INFO("Reconfigure request : Kp_x  = %.2f  ", config.Kp_x);
-  } else if (Kpos_y_ != config.Kp_y) {
+  }
+  if (Kpos_y_ != config.Kp_y) {
     Kpos_y_ = config.Kp_y;
     ROS_INFO("Reconfigure request : Kp_y  = %.2f  ", config.Kp_y);
-  } else if (Kpos_z_ != config.Kp_z) {
+  }
+  if (Kpos_z_ != config.Kp_z) {
     Kpos_z_ = config.Kp_z;
     ROS_INFO("Reconfigure request : Kp_z  = %.2f  ", config.Kp_z);
-  } else if (Kvel_x_ != config.Kv_x) {
+  }
+  if (Kvel_x_ != config.Kv_x) {
     Kvel_x_ = config.Kv_x;
     ROS_INFO("Reconfigure request : Kv_x  = %.2f  ", config.Kv_x);
-  } else if (Kvel_y_ != config.Kv_y) {
+  }
+  if (Kvel_y_ != config.Kv_y) {
     Kvel_y_ = config.Kv_y;
     ROS_INFO("Reconfigure request : Kv_y =%.2f  ", config.Kv_y);
-  } else if (Kvel_z_ != config.Kv_z) {
+  }
+  if (Kvel_z_ != config.Kv_z) {
     Kvel_z_ = config.Kv_z;
     ROS_INFO("Reconfigure request : Kv_z  = %.2f  ", config.Kv_z);
+  }
+  if (Krot_r_ != config.KR_r) {
+    Krot_r_ = config.KR_r;
+    attitude_gain_changed = true;
+    ROS_INFO("Reconfigure request : KR_r  = %.2f  ", config.KR_r);
+  }
+  if (Krot_p_ != config.KR_p) {
+    Krot_p_ = config.KR_p;
+    attitude_gain_changed = true;
+    ROS_INFO("Reconfigure request : KR_p  = %.2f  ", config.KR_p);
+  }
+  if (Krot_y_ != config.KR_y) {
+    Krot_y_ = config.KR_y;
+    attitude_gain_changed = true;
+    ROS_INFO("Reconfigure request : KR_y  = %.2f  ", config.KR_y);
   }
 
   Kpos_ << -Kpos_x_, -Kpos_y_, -Kpos_z_;
   Kvel_ << -Kvel_x_, -Kvel_y_, -Kvel_z_;
+  if (attitude_gain_changed) {
+    updateAttitudeControlTimeConstant();
+    controller_->setAttitudeControlTimeConstant(attctrl_tau_);
+  }
 }

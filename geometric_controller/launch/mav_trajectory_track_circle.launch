@@ -17,9 +17,18 @@
           <param name="ctrl_mode" value="$(arg command_input)" />
           <param name="enable_sim" value="$(arg gazebo_simulation)" />
           <param name="max_acc" value="10.0" />
-          <param name="Kpos_x" value="8.0" />
-          <param name="Kpos_y" value="8.0" />
-          <param name="Kpos_z" value="10.0" />
+          <!--Params specific for Iris copter-->
+          <param name="KR_r" value="4.0"/>
+          <param name="KR_p" value="4.0"/>
+          <param name="KR_y" value="4.0"/>
+          <param name="normalizedthrust_constant" value="0.022"/>
+          <param name="normalizedthrust_offset" value="0.0"/>
+          <param name="Kp_x" value="10.0" />
+          <param name="Kp_y" value="10.0" />
+          <param name="Kp_z" value="20.0" />
+          <param name="Kv_x" value="5.0"/>
+          <param name="Kv_y" value="5.0"/>
+          <param name="Kv_z" value="10.0"/>
   </node>
 
   <node pkg="trajectory_publisher" type="trajectory_publisher" name="trajectory_publisher" output="screen">
@@ -27,6 +36,11 @@
         <param name="shape_omega" value="1.2" />
         <param name="initpos_z" value="2.0" />
         <param name="reference_type" value="2" />
+        <param name="adaptive_trajectory_start_ramp" value="true" />
+        <param name="trajectory_start_ramp_duration" value="2.0" />
+        <param name="trajectory_start_ramp_min_duration" value="0.5" />
+        <param name="trajectory_start_ramp_velocity_limit" value="2.0" />
+        <param name="trajectory_start_ramp_acceleration_limit" value="6.0" />
   </node>
 
   <include file="$(find mavros)/launch/node.launch">

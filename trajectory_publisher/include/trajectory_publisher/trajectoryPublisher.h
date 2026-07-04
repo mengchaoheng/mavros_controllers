@@ -99,10 +99,21 @@ class trajectoryPublisher {
   double primitive_duration_;
   double trigger_time_;
   double init_pos_x_, init_pos_y_, init_pos_z_;
+  double takeoff_position_tolerance_;
+  double takeoff_velocity_tolerance_;
+  double trajectory_start_ramp_configured_duration_;
+  double trajectory_start_ramp_duration_;
+  double trajectory_start_ramp_min_duration_;
+  double trajectory_start_ramp_velocity_limit_;
+  double trajectory_start_ramp_acceleration_limit_;
   double max_jerk_;
   int pubreference_type_;
   int num_primitives_;
   int motion_selector_;
+  bool takeoff_before_trajectory_;
+  bool adaptive_trajectory_start_ramp_;
+  bool trajectory_started_;
+  Eigen::Vector3d takeoff_target_;
 
   std::vector<std::shared_ptr<trajectory>> motionPrimitives_;
   std::vector<Eigen::Vector3d> inputs_;
@@ -118,6 +129,11 @@ class trajectoryPublisher {
   void pubrefSetpointRawGlobal();
   void initializePrimitives(int type);
   void updatePrimitives();
+  void updateTakeoffTarget();
+  void updateTrajectoryStartRampDuration();
+  void setTakeoffReference();
+  bool takeoffTargetReached();
+  void applyTrajectoryStartRamp(double trajectory_time);
   void loopCallback(const ros::TimerEvent& event);
   void refCallback(const ros::TimerEvent& event);
   bool triggerCallback(std_srvs::SetBool::Request& req, std_srvs::SetBool::Response& res);

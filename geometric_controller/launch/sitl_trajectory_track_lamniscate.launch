@@ -6,6 +6,7 @@
   <arg name="tgt_component" default="1" />
   <arg name="command_input" default="2" />
   <arg name="gazebo_simulation" default="true" />
+  <arg name="gazebo_gui" default="false" />
   <arg name="visualization" default="true"/>
   <arg name="log_output" default="screen" />
   <arg name="fcu_protocol" default="v2.0" />
@@ -17,13 +18,19 @@
           <param name="ctrl_mode" value="$(arg command_input)" />
           <param name="enable_sim" value="$(arg gazebo_simulation)" />
           <param name="enable_gazebo_state" value="true"/>
-          <param name="max_acc" value="20.0" />
-          <param name="Kp_x" value="12.0" />
-          <param name="Kp_y" value="12.0" />
-          <param name="Kp_z" value="10.0" />
-          <param name="Kv_x" value="3.0" />
-          <param name="Kv_y" value="3.0" />
-          <param name="Kv_z" value="3.3" />
+          <param name="max_acc" value="10.0" />
+          <!--Params specific for Iris copter-->
+          <param name="KR_r" value="4.0"/>
+          <param name="KR_p" value="4.0"/>
+          <param name="KR_y" value="4.0"/>
+          <param name="normalizedthrust_constant" value="0.022"/>
+          <param name="normalizedthrust_offset" value="0.0"/>
+          <param name="Kp_x" value="10.0" />
+          <param name="Kp_y" value="10.0" />
+          <param name="Kp_z" value="20.0" />
+          <param name="Kv_x" value="5.0"/>
+          <param name="Kv_y" value="5.0"/>
+          <param name="Kv_z" value="10.0"/>
   </node>
 
   <node pkg="trajectory_publisher" type="trajectory_publisher" name="trajectory_publisher" output="screen">
@@ -31,6 +38,11 @@
         <param name="shape_omega" value="1.2" />
         <param name="initpos_z" value="2.0" />
         <param name="reference_type" value="2" />
+        <param name="adaptive_trajectory_start_ramp" value="true" />
+        <param name="trajectory_start_ramp_duration" value="2.0" />
+        <param name="trajectory_start_ramp_min_duration" value="0.5" />
+        <param name="trajectory_start_ramp_velocity_limit" value="2.0" />
+        <param name="trajectory_start_ramp_acceleration_limit" value="6.0" />
   </node>
 
   <!-- Launch rqt_reconfigure -->
@@ -51,6 +63,7 @@
 
   <include file="$(find px4)/launch/posix_sitl.launch">
       <arg name="vehicle" value="$(arg mav_name)"/>
+      <arg name="gui" value="$(arg gazebo_gui)"/>
   </include>
 
   <group if="$(arg visualization)">

@@ -5,3 +5,4 @@
 
 #Artifacts from vscode
 .vscode/*
+/paper/main.pdf

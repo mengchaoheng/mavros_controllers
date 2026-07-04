@@ -40,7 +40,9 @@
 
 #include "geometric_controller/nonlinear_geometric_control.h"
 
-NonlinearGeometricControl::NonlinearGeometricControl(double attctrl_tau) : Control() { attctrl_tau_ = attctrl_tau; }
+NonlinearGeometricControl::NonlinearGeometricControl(const Eigen::Vector3d &attctrl_tau) : Control() {
+  attctrl_tau_ = attctrl_tau;
+}
 
 NonlinearGeometricControl::~NonlinearGeometricControl() {}
 
@@ -60,7 +62,7 @@ void NonlinearGeometricControl::Update(Eigen::Vector4d &curr_att, const Eigen::V
   rotmat_d = quat2RotMatrix(ref_att);
 
   error_att = 0.5 * matrix_hat_inv(rotmat_d.transpose() * rotmat - rotmat.transpose() * rotmat_d);
-  desired_rate_ = (2.0 / attctrl_tau_) * error_att;
+  desired_rate_ = (2.0 * attctrl_tau_.cwiseInverse()).asDiagonal() * error_att;
   const Eigen::Vector3d zb = rotmat.col(2);
   desired_thrust_(0) = 0.0;
   desired_thrust_(1) = 0.0;
