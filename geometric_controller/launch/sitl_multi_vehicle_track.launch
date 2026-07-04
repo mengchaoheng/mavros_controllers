@@ -6,6 +6,7 @@
     <arg name="log_output" default="screen" />
     <arg name="fcu_protocol" default="v2.0" />
     <arg name="respawn_mavros" default="false" />
+    <arg name="cmdloop_rate" default="250.0" />
     <arg name="vehicle" default="iris"/>
     <arg name="world" default="$(find mavlink_sitl_gazebo)/worlds/empty.world"/>
     <!-- gazebo configs -->
@@ -54,6 +55,7 @@
             <param name="ctrl_mode" value="$(arg command_input)" />
             <param name="enable_sim" value="$(arg gazebo_simulation)" />
             <param name="enable_gazebo_state" value="true"/>
+            <param name="cmdloop_rate" value="$(arg cmdloop_rate)" />
             <param name="max_acc" value="10.0" />
             <!--Params specific for Iris copter-->
             <param name="KR_r" value="4.0"/>
@@ -70,8 +72,9 @@
         </node>
         <!-- Trajectory publisher-->
         <node pkg="trajectory_publisher" type="trajectory_publisher" name="trajectory_publisher" output="screen">
-            <param name="trajectory_type" value="1" />
-            <param name="shape_omega" value="1.0" />
+            <param name="trajName" value="fast_circle" />
+            <param name="omega_mode" value="0" />
+            <param name="omega_value" value="0.6" />
             <param name="initpos_z" value="1.0" />
             <param name="reference_type" value="2" />
             <param name="adaptive_trajectory_start_ramp" value="true" />
@@ -113,6 +116,7 @@
             <param name="ctrl_mode" value="$(arg command_input)" />
             <param name="enable_sim" value="$(arg gazebo_simulation)" />
             <param name="enable_gazebo_state" value="true"/>
+            <param name="cmdloop_rate" value="$(arg cmdloop_rate)" />
             <param name="max_acc" value="10.0" />
             <!--Params specific for Iris copter-->
             <param name="KR_r" value="4.0"/>
@@ -129,8 +133,9 @@
         </node>
         <!-- Trajectory publisher-->
         <node pkg="trajectory_publisher" type="trajectory_publisher" name="trajectory_publisher" output="screen">
-            <param name="trajectory_type" value="1" />
-            <param name="shape_omega" value="1.5" />
+            <param name="trajName" value="fast_circle" />
+            <param name="omega_mode" value="0" />
+            <param name="omega_value" value="0.8" />
             <param name="initpos_z" value="2.0" />
             <param name="reference_type" value="2" />
             <param name="adaptive_trajectory_start_ramp" value="true" />

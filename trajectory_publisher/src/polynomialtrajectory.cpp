@@ -153,6 +153,12 @@ Eigen::Vector3d polynomialtrajectory::getAcceleration(double time) {
   return acceleration;
 }
 
+Eigen::Vector3d polynomialtrajectory::getJerk(double time) {
+  Eigen::Vector3d jerk;
+  jerk << 6.0 * c_x_(3), 6.0 * c_y_(3), 6.0 * c_z_(3);
+  return jerk;
+}
+
 nav_msgs::Path polynomialtrajectory::getSegment() {
   Eigen::Vector3d targetPosition;
   Eigen::Vector4d targetOrientation;

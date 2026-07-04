@@ -10,10 +10,15 @@
   <arg name="log_output" default="screen" />
   <arg name="fcu_protocol" default="v2.0" />
   <arg name="respawn_mavros" default="false" />
+  <arg name="trajectory_yaw_lock" default="false" />
+  <arg name="trajectory_yaw_fixed" default="0.0" />
   
   <node pkg="trajectory_publisher" type="trajectory_publisher" name="trajectory_publisher" output="screen">
-        <param name="trajectory_type" value="1" />
-        <param name="shape_omega" value="1.2" />
+        <param name="trajName" value="fast_circle" />
+        <param name="omega_mode" value="0" />
+        <param name="omega_value" value="0.8" />
+        <param name="trajectory_yaw_lock" value="$(arg trajectory_yaw_lock)" />
+        <param name="trajectory_yaw_fixed" value="$(arg trajectory_yaw_fixed)" />
         <param name="initpos_z" value="2.0" />
         <param name="max_acc" value="10.0" />
         <param name="Kpos_x" value="8.0" />

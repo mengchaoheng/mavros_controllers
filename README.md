@@ -114,10 +114,10 @@ source Tools/setup_gazebo.bash $(pwd) $(pwd)/build/px4_sitl_default
 export ROS_PACKAGE_PATH=$ROS_PACKAGE_PATH:$(pwd)
 export ROS_PACKAGE_PATH=$ROS_PACKAGE_PATH:$(pwd)/Tools/sitl_gazebo
 ```
-The following launch file enables the geometric controller to follow a circular trajectory
+The following launch file enables the geometric controller to follow a selectable trajectory
 
 ``` bash
-roslaunch geometric_controller sitl_trajectory_track_circle.launch
+roslaunch geometric_controller sitl_trajectory_track.launch
 ```
 
 If the UAV does not takeoff, please open QGroundControl and enable virtual joystick as mentioned [here](https://docs.qgroundcontrol.com/master/en/SettingsView/VirtualJoystick.html)

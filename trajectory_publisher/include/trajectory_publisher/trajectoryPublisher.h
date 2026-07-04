@@ -42,9 +42,12 @@
 #include <stdio.h>
 #include <Eigen/Dense>
 #include <cstdlib>
+#include <memory>
 #include <sstream>
 #include <string>
+#include <utility>
 
+#include <dynamic_reconfigure/server.h>
 #include <geometry_msgs/PoseStamped.h>
 #include <geometry_msgs/TwistStamped.h>
 #include <mavconn/mavlink_dialect.h>
@@ -54,9 +57,11 @@
 #include <nav_msgs/Path.h>
 #include <ros/ros.h>
 #include <std_msgs/Int32.h>
+#include <std_msgs/Float32.h>
 #include <std_msgs/String.h>
 #include <std_srvs/SetBool.h>
 #include "controller_msgs/FlatTarget.h"
+#include <trajectory_publisher/TrajectoryPublisherConfig.h>
 #include "trajectory_publisher/polynomialtrajectory.h"
 #include "trajectory_publisher/shapetrajectory.h"
 #include "trajectory_publisher/trajectory.h"
@@ -73,6 +78,7 @@ class trajectoryPublisher {
   ros::Publisher trajectoryPub_;
   ros::Publisher referencePub_;
   ros::Publisher flatreferencePub_;
+  ros::Publisher yawreferencePub_;
   ros::Publisher rawreferencePub_;
   ros::Publisher global_rawreferencePub_;
   std::vector<ros::Publisher> primitivePub_;
@@ -89,11 +95,34 @@ class trajectoryPublisher {
   nav_msgs::Path primTrajectory_;
   mavros_msgs::State current_state_;
 
+  struct OmegaProfile {
+    double default_value;
+    double min;
+    double max;
+  };
+
   int trajectory_type_;
-  Eigen::Vector3d p_targ, v_targ, a_targ;
+  Eigen::Vector3d p_targ, v_targ, a_targ, j_targ;
   Eigen::Vector3d p_mav_, v_mav_;
   Eigen::Vector3d shape_origin_, shape_axis_;
-  double shape_omega_ = 0;
+  Eigen::Matrix<double, 6, 3> transition_position_coeffs_;
+  Eigen::Matrix<double, 6, 1> transition_yaw_coeffs_;
+  Eigen::Vector3d transition_final_target_;
+  double yaw_targ_;
+  double trajectory_yaw_fixed_;
+  double omega_value_;
+  double omega_start_;
+  double omega_end_;
+  double omega_duration_;
+  double shape_phase_shift_;
+  double path_preview_cycles_;
+  double transition_segment_duration_;
+  double trajectory_switch_transition_duration_;
+  double trajectory_switch_transition_min_duration_;
+  double trajectory_switch_transition_max_duration_;
+  double trajectory_switch_transition_velocity_limit_;
+  double trajectory_switch_transition_acceleration_limit_;
+  double trajectory_switch_stop_speed_threshold_;
   double theta_ = 0.0;
   double controlUpdate_dt_;
   double primitive_duration_;
@@ -112,8 +141,22 @@ class trajectoryPublisher {
   int motion_selector_;
   bool takeoff_before_trajectory_;
   bool adaptive_trajectory_start_ramp_;
+  bool trajectory_yaw_lock_;
   bool trajectory_started_;
+  bool first_reconfigure_;
+  bool transition_active_;
+  int omega_mode_;
+  int transition_stage_;
   Eigen::Vector3d takeoff_target_;
+  ros::Time transition_start_time_;
+  std::shared_ptr<dynamic_reconfigure::Server<trajectory_publisher::TrajectoryPublisherConfig>> dyn_server_;
+  shapetrajectory::Params shape_params_;
+  OmegaProfile figure8_horizontal_omega_profile_;
+  OmegaProfile figure8_vertical_omega_profile_;
+  OmegaProfile helix_flip_omega_profile_;
+  OmegaProfile helix_flip_y_omega_profile_;
+  OmegaProfile flip_loop_sine_omega_profile_;
+  OmegaProfile fast_circle_omega_profile_;
 
   std::vector<std::shared_ptr<trajectory>> motionPrimitives_;
   std::vector<Eigen::Vector3d> inputs_;
@@ -125,10 +168,33 @@ class trajectoryPublisher {
   void pubprimitiveTrajectory();
   void pubrefState();
   void pubflatrefState();
+  void pubyawState();
   void pubrefSetpointRaw();
   void pubrefSetpointRawGlobal();
   void initializePrimitives(int type);
+  void applyShapeParams();
   void updatePrimitives();
+  void readShapeParams();
+  void readOmegaProfiles();
+  void readTrajectoryType();
+  void resetTrajectoryStart();
+  void startTrajectoryTransition();
+  void startTransitionSegment(const Eigen::Vector3d& position_start, const Eigen::Vector3d& velocity_start,
+                              const Eigen::Vector3d& acceleration_start, const Eigen::Vector3d& position_goal,
+                              double yaw_start, double yaw_goal, double duration, int stage);
+  void updateTransitionReference();
+  void evaluateTransitionSegment(double time);
+  double estimateTransitionDuration(double distance, double speed) const;
+  double omegaDefaultForTrajectory(int type) const;
+  std::pair<double, double> omegaRangeForTrajectory(int type) const;
+  double clampToOmegaRange(double value, int type) const;
+  bool activeShapeGeometryChanged(const trajectory_publisher::TrajectoryPublisherConfig& config) const;
+  void updateOmegaProfilesFromConfig(const trajectory_publisher::TrajectoryPublisherConfig& config);
+  void updateReferenceYaw(double trajectory_time);
+  void seedDynamicReconfigure(trajectory_publisher::TrajectoryPublisherConfig& config);
+  void updateShapeParamsFromConfig(const trajectory_publisher::TrajectoryPublisherConfig& config);
+  bool configChangesTrajectory(const trajectory_publisher::TrajectoryPublisherConfig& config) const;
+  void dynamicReconfigureCallback(trajectory_publisher::TrajectoryPublisherConfig& config, uint32_t level);
   void updateTakeoffTarget();
   void updateTrajectoryStartRampDuration();
   void setTakeoffReference();

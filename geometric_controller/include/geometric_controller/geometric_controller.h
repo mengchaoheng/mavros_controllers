@@ -126,6 +126,7 @@ class geometricCtrl {
   Eigen::Vector3d attctrl_tau_;
   double norm_thrust_const_, norm_thrust_offset_;
   double max_fb_acc_;
+  double cmdloop_rate_;
 
   mavros_msgs::State current_state_;
   mavros_msgs::CommandBool arm_cmd_;
@@ -169,6 +170,7 @@ class geometricCtrl {
   Eigen::Vector3d controlPosition(const Eigen::Vector3d &target_pos, const Eigen::Vector3d &target_vel,
                                   const Eigen::Vector3d &target_acc);
   Eigen::Vector3d poscontroller(const Eigen::Vector3d &pos_error, const Eigen::Vector3d &vel_error);
+  void updateCommandLoopRate(double rate_hz);
   Eigen::Vector4d attcontroller(const Eigen::Vector4d &ref_att, const Eigen::Vector3d &ref_acc,
                                 Eigen::Vector4d &curr_att);
 

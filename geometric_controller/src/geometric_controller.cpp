@@ -51,6 +51,13 @@ using namespace std;
 
 namespace {
 double roundToFourDecimals(double value) { return std::round(value * 10000.0) / 10000.0; }
+
+double sanitizeCmdloopRate(double rate) {
+  if (!std::isfinite(rate)) {
+    return 250.0;
+  }
+  return std::max(20.0, std::min(500.0, rate));
+}
 }  // namespace
 
 // Constructor
@@ -71,7 +78,9 @@ geometricCtrl::geometricCtrl(const ros::NodeHandle &nh, const ros::NodeHandle &n
   mavtwistSub_ = nh_.subscribe("mavros/local_position/velocity_local", 1, &geometricCtrl::mavtwistCallback, this,
                                ros::TransportHints().tcpNoDelay());
   ctrltriggerServ_ = nh_.advertiseService("trigger_rlcontroller", &geometricCtrl::ctrltriggerCallback, this);
-  cmdloop_timer_ = nh_.createTimer(ros::Duration(0.01), &geometricCtrl::cmdloopCallback,
+  nh_private_.param<double>("cmdloop_rate", cmdloop_rate_, 250.0);
+  cmdloop_rate_ = sanitizeCmdloopRate(cmdloop_rate_);
+  cmdloop_timer_ = nh_.createTimer(ros::Duration(1.0 / cmdloop_rate_), &geometricCtrl::cmdloopCallback,
                                    this);  // Define timer for constant loop rate
   statusloop_timer_ = nh_.createTimer(ros::Duration(1), &geometricCtrl::statusloopCallback,
                                       this);  // Define timer for constant loop rate
@@ -141,6 +150,16 @@ void geometricCtrl::updateAttitudeControlTimeConstant() {
   constexpr double kMinAttitudeGain = 1e-6;
   attctrl_tau_ << 1.0 / std::max(Krot_r_, kMinAttitudeGain), 1.0 / std::max(Krot_p_, kMinAttitudeGain),
       1.0 / std::max(Krot_y_, kMinAttitudeGain);
+}
+
+void geometricCtrl::updateCommandLoopRate(double rate_hz) {
+  const double sanitized_rate = sanitizeCmdloopRate(rate_hz);
+  if (std::abs(cmdloop_rate_ - sanitized_rate) < 1e-9) {
+    return;
+  }
+  cmdloop_rate_ = sanitized_rate;
+  cmdloop_timer_.setPeriod(ros::Duration(1.0 / cmdloop_rate_), true);
+  ROS_INFO("Reconfigure request : cmdloop_rate = %.4f Hz", cmdloop_rate_);
 }
 
 void geometricCtrl::targetCallback(const geometry_msgs::TwistStamped &msg) {
@@ -465,6 +484,7 @@ void geometricCtrl::dynamicReconfigureCallback(geometric_controller::GeometricCo
                                                uint32_t level) {
   bool attitude_gain_changed = false;
 
+  config.cmdloop_rate = roundToFourDecimals(sanitizeCmdloopRate(config.cmdloop_rate));
   config.max_acc = roundToFourDecimals(config.max_acc);
   config.normalizedthrust_constant = roundToFourDecimals(config.normalizedthrust_constant);
   config.normalizedthrust_offset = roundToFourDecimals(config.normalizedthrust_offset);
@@ -477,6 +497,8 @@ void geometricCtrl::dynamicReconfigureCallback(geometric_controller::GeometricCo
   config.KR_r = roundToFourDecimals(config.KR_r);
   config.KR_p = roundToFourDecimals(config.KR_p);
   config.KR_y = roundToFourDecimals(config.KR_y);
+
+  updateCommandLoopRate(config.cmdloop_rate);
 
   if (max_fb_acc_ != config.max_acc) {
     max_fb_acc_ = config.max_acc;
