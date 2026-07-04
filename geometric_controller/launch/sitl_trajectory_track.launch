@@ -19,7 +19,7 @@
 
   <arg name="cmdloop_rate" default="250.0" />
   <arg name="controller_type" default="0" />
-  <arg name="max_acc" default="10.0" />
+  <arg name="max_acc" default="45.0" />
   <arg name="KR_r" default="4.0" />
   <arg name="KR_p" default="4.0" />
   <arg name="KR_y" default="4.0" />
@@ -27,10 +27,10 @@
   <arg name="normalizedthrust_offset" default="0.0" />
   <arg name="Kp_x" default="10.0" />
   <arg name="Kp_y" default="10.0" />
-  <arg name="Kp_z" default="20.0" />
-  <arg name="Kv_x" default="5.0" />
-  <arg name="Kv_y" default="5.0" />
-  <arg name="Kv_z" default="10.0" />
+  <arg name="Kp_z" default="12.0" />
+  <arg name="Kv_x" default="6.0" />
+  <arg name="Kv_y" default="6.0" />
+  <arg name="Kv_z" default="6.0" />
 
   <arg name="trajName" default="figure8_horizontal" />
   <arg name="omega_mode" default="0" />
@@ -60,32 +60,32 @@
   <arg name="fast_circle_omega_min" default="0.05" />
   <arg name="fast_circle_omega_max" default="3.5" />
 
-  <arg name="figure8_horizontal_Ax" default="2.0" />
-  <arg name="figure8_horizontal_Ay" default="2.0" />
-  <arg name="figure8_horizontal_Hc" default="3.0" />
+  <arg name="figure8_horizontal_Ax" default="3.0" />
+  <arg name="figure8_horizontal_Ay" default="3.0" />
+  <arg name="figure8_horizontal_Hc" default="5.0" />
   <arg name="figure8_horizontal_theta0" default="0.0" />
-  <arg name="figure8_vertical_Ay" default="2.0" />
-  <arg name="figure8_vertical_Az" default="2.0" />
-  <arg name="figure8_vertical_Hc" default="3.0" />
+  <arg name="figure8_vertical_Ay" default="3.0" />
+  <arg name="figure8_vertical_Az" default="3.0" />
+  <arg name="figure8_vertical_Hc" default="5.0" />
   <arg name="figure8_vertical_theta0" default="-0.7854" />
-  <arg name="helix_flip_Ay" default="2.0" />
-  <arg name="helix_flip_Az" default="2.0" />
-  <arg name="helix_flip_Hc" default="3.0" />
+  <arg name="helix_flip_Ay" default="3.0" />
+  <arg name="helix_flip_Az" default="3.0" />
+  <arg name="helix_flip_Hc" default="5.0" />
   <arg name="helix_flip_Vx" default="0.3" />
   <arg name="helix_flip_theta0" default="0.0" />
-  <arg name="helix_flip_y_Ax" default="2.0" />
-  <arg name="helix_flip_y_Az" default="2.0" />
-  <arg name="helix_flip_y_Hc" default="3.0" />
+  <arg name="helix_flip_y_Ax" default="3.0" />
+  <arg name="helix_flip_y_Az" default="3.0" />
+  <arg name="helix_flip_y_Hc" default="5.0" />
   <arg name="helix_flip_y_Vy" default="0.3" />
   <arg name="helix_flip_y_theta0" default="0.0" />
-  <arg name="flip_loop_sine_Ay" default="2.0" />
-  <arg name="flip_loop_sine_Az" default="2.0" />
-  <arg name="flip_loop_sine_Hc" default="3.0" />
+  <arg name="flip_loop_sine_Ay" default="3.0" />
+  <arg name="flip_loop_sine_Az" default="3.0" />
+  <arg name="flip_loop_sine_Hc" default="5.0" />
   <arg name="flip_loop_sine_Vx" default="0.0" />
   <arg name="flip_loop_sine_theta0" default="0.0" />
   <arg name="fast_circle_Ax" default="3.0" />
   <arg name="fast_circle_Ay" default="3.0" />
-  <arg name="fast_circle_Hc" default="3.0" />
+  <arg name="fast_circle_Hc" default="5.0" />
   <arg name="fast_circle_theta0" default="0.0" />
 
   <arg name="initpos_z" default="2.0" />
@@ -94,10 +94,10 @@
   <arg name="takeoff_position_tolerance" default="0.25" />
   <arg name="takeoff_velocity_tolerance" default="0.5" />
   <arg name="adaptive_trajectory_start_ramp" default="true" />
-  <arg name="trajectory_start_ramp_duration" default="2.0" />
+  <arg name="trajectory_start_ramp_duration" default="5.0" />
   <arg name="trajectory_start_ramp_min_duration" default="0.5" />
-  <arg name="trajectory_start_ramp_velocity_limit" default="2.0" />
-  <arg name="trajectory_start_ramp_acceleration_limit" default="6.0" />
+  <arg name="trajectory_start_ramp_velocity_limit" default="3.0" />
+  <arg name="trajectory_start_ramp_acceleration_limit" default="10.0" />
   <arg name="trajectory_switch_transition_duration" default="3.0" />
   <arg name="trajectory_switch_transition_min_duration" default="1.0" />
   <arg name="trajectory_switch_transition_max_duration" default="12.0" />
