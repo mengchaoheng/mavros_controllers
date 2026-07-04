@@ -1,0 +1,73 @@
+#!/bin/sh
+#
+# @name 3DR Iris Quadrotor SITL
+#
+# @type Quadrotor Wide
+#
+# @maintainer Julian Oes <julian@oes.ch>
+#
+
+. ${R}etc/init.d/rc.mc_defaults
+
+
+param set-default CA_AIRFRAME 0
+
+# Tuned for the reduced Iris mass/inertia used in the Gazebo model.
+param set-default MC_ROLL_P 6.5
+param set-default MC_PITCH_P 6.5
+param set-default MC_YAW_P 6.5
+param set-default MC_YAW_WEIGHT 1.0
+
+param set-default MC_ROLLRATE_P 0.038
+param set-default MC_ROLLRATE_I 0.042
+param set-default MC_ROLLRATE_D 0.0
+
+param set-default MC_PITCHRATE_P 0.037
+param set-default MC_PITCHRATE_I 0.040
+param set-default MC_PITCHRATE_D 0.0
+
+param set-default MC_YAWRATE_P 0.047
+param set-default MC_YAWRATE_I 0.096
+param set-default MC_YAWRATE_D 0.0
+
+param set-default THR_MDL_FAC 1.0
+param set-default MPC_THR_HOVER 0.23
+
+param set-default MPC_XY_P 1.6667
+param set-default MPC_Z_P 1.6667
+param set-default MPC_XY_VEL_P_ACC 6.0
+param set-default MPC_Z_VEL_P_ACC 6.0
+param set-default MPC_XY_VEL_I_ACC 0.0
+param set-default MPC_Z_VEL_I_ACC 0.0
+param set-default MPC_XY_VEL_D_ACC 0.0
+param set-default MPC_Z_VEL_D_ACC 0.0
+
+param set-default MPC_XY_VEL_MAX 20.0
+
+
+
+param set-default CA_ROTOR_COUNT 4
+param set-default CA_ROTOR0_PX 0.13
+param set-default CA_ROTOR0_PY 0.22
+param set-default CA_ROTOR0_KM 0.0157
+param set-default CA_ROTOR0_CT 8.5
+
+param set-default CA_ROTOR1_PX -0.13
+param set-default CA_ROTOR1_PY -0.20
+param set-default CA_ROTOR1_KM 0.0157
+param set-default CA_ROTOR1_CT 8.5
+
+param set-default CA_ROTOR2_PX 0.13
+param set-default CA_ROTOR2_PY -0.22
+param set-default CA_ROTOR2_KM -0.0157
+param set-default CA_ROTOR2_CT 8.5
+
+param set-default CA_ROTOR3_PX -0.13
+param set-default CA_ROTOR3_PY 0.20
+param set-default CA_ROTOR3_KM -0.0157
+param set-default CA_ROTOR3_CT 8.5
+
+param set-default PWM_MAIN_FUNC1 101
+param set-default PWM_MAIN_FUNC2 102
+param set-default PWM_MAIN_FUNC3 103
+param set-default PWM_MAIN_FUNC4 104
