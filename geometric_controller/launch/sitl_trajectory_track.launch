@@ -19,7 +19,7 @@
 
   <arg name="cmdloop_rate" default="250.0" />
   <arg name="controller_type" default="0" />
-  <arg name="max_acc" default="45.0" />
+  <arg name="max_acc" default="50.0" />
   <arg name="KR_r" default="4.0" />
   <arg name="KR_p" default="4.0" />
   <arg name="KR_y" default="4.0" />
