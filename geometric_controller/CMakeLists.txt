@@ -6,6 +6,9 @@ add_definitions(-std=c++11)
 find_package(catkin REQUIRED COMPONENTS
   roscpp
   rospy
+  std_msgs
+  geometry_msgs
+  controller_msgs
   dynamic_reconfigure
   tf
   mavros

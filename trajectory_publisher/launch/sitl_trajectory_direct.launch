@@ -1,0 +1,68 @@
+<launch>
+  <!-- Unified controller selector. controller_type=8 selects the PX4-direct
+       route; controller_type=0..7 selects an external control law. -->
+
+  <arg name="mav_name" default="iris"/>
+  <arg name="fcu_url" default="udp://:14540@127.0.0.1:14557"/>
+  <arg name="gcs_url" default=""/>
+  <arg name="gazebo_gui" default="false"/>
+  <arg name="visualization" default="true"/>
+  <arg name="rqt_reconfigure" default="true"/>
+  <arg name="run_mavros" default="true"/>
+  <arg name="run_px4_sitl" default="true"/>
+
+  <arg name="trajName" default="figure8_horizontal"/>
+  <arg name="omega_mode" default="0"/>
+  <arg name="omega_value" default="0.5"/>
+  <arg name="omega_start" default="0.5"/>
+  <arg name="omega_end" default="1.5"/>
+  <arg name="omega_duration" default="20.0"/>
+  <arg name="path_preview_cycles" default="10.0"/>
+  <arg name="trajectory_yaw_lock" default="true"/>
+  <arg name="trajectory_yaw_fixed" default="0.0"/>
+
+  <arg name="controller_type" default="8"/>
+  <arg name="command_input" default="2"/>
+  <arg name="cmdloop_rate" default="250.0"/>
+
+  <arg name="initpos_z" default="2.0"/>
+  <arg name="updaterate" default="0.01"/>
+  <arg name="takeoff_before_trajectory" default="true"/>
+  <arg name="adaptive_trajectory_start_ramp" default="true"/>
+  <arg name="trajectory_start_ramp_duration" default="5.0"/>
+
+  <include file="$(find geometric_controller)/launch/sitl_trajectory_track.launch">
+    <arg name="mav_name" value="$(arg mav_name)"/>
+    <arg name="fcu_url" value="$(arg fcu_url)"/>
+    <arg name="gcs_url" value="$(arg gcs_url)"/>
+    <arg name="gazebo_gui" value="$(arg gazebo_gui)"/>
+    <arg name="visualization" value="$(arg visualization)"/>
+    <arg name="rqt_reconfigure" value="$(arg rqt_reconfigure)"/>
+    <arg name="run_geometric_controller" value="true"/>
+    <arg name="run_mavros" value="$(arg run_mavros)"/>
+    <arg name="run_px4_sitl" value="$(arg run_px4_sitl)"/>
+    <arg name="controller_type" value="$(arg controller_type)"/>
+    <arg name="command_input" value="$(arg command_input)"/>
+    <arg name="cmdloop_rate" value="$(arg cmdloop_rate)"/>
+
+    <arg name="trajName" value="$(arg trajName)"/>
+    <arg name="omega_mode" value="$(arg omega_mode)"/>
+    <arg name="omega_value" value="$(arg omega_value)"/>
+    <arg name="omega_start" value="$(arg omega_start)"/>
+    <arg name="omega_end" value="$(arg omega_end)"/>
+    <arg name="omega_duration" value="$(arg omega_duration)"/>
+    <arg name="path_preview_cycles" value="$(arg path_preview_cycles)"/>
+    <arg name="trajectory_yaw_lock" value="$(arg trajectory_yaw_lock)"/>
+    <arg name="trajectory_yaw_fixed" value="$(arg trajectory_yaw_fixed)"/>
+
+    <arg name="initpos_z" value="$(arg initpos_z)"/>
+    <arg name="reference_type" value="2"/>
+    <arg name="updaterate" value="$(arg updaterate)"/>
+    <arg name="takeoff_before_trajectory" value="$(arg takeoff_before_trajectory)"/>
+    <arg name="adaptive_trajectory_start_ramp" value="$(arg adaptive_trajectory_start_ramp)"/>
+    <arg name="trajectory_start_ramp_duration" value="$(arg trajectory_start_ramp_duration)"/>
+
+    <arg name="auto_offboard" value="false"/>
+    <arg name="auto_arm" value="false"/>
+  </include>
+</launch>

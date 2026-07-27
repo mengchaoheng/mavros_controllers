@@ -126,16 +126,26 @@ source Tools/setup_gazebo.bash $(pwd) $(pwd)/build/px4_sitl_default
 export ROS_PACKAGE_PATH=$ROS_PACKAGE_PATH:$(pwd)
 export ROS_PACKAGE_PATH=$ROS_PACKAGE_PATH:$(pwd)/Tools/simulation/gazebo-classic/sitl_gazebo-classic
 ```
-The following launch file enables the geometric controller to follow a selectable trajectory
+The unified SITL launch exposes the PX4-direct route as one option in the controller selector.
 
-``` bash
-roslaunch geometric_controller sitl_trajectory_track.launch
+To use the geometric controller:
+
+```bash
+roslaunch trajectory_publisher sitl_trajectory_direct.launch controller_type:=0
 ```
+
+To bypass the external controller and stream position, velocity, acceleration, and yaw references directly to PX4's internal position controller:
+
+```bash
+roslaunch trajectory_publisher sitl_trajectory_direct.launch controller_type:=8
+```
+
+Both paths start from the same launch file and use the same `controller_type` selector; `8` (`px4_direct`) is the default. It can also be selected online through `rqt_reconfigure`.
 
 The controller can be selected online through `rqt_reconfigure` or at launch:
 
 ```bash
-roslaunch geometric_controller sitl_trajectory_track.launch controller_type:=1
+roslaunch trajectory_publisher sitl_trajectory_direct.launch controller_type:=1
 ```
 
 `controller_type` values are:
@@ -148,8 +158,9 @@ roslaunch geometric_controller sitl_trajectory_track.launch controller_type:=1
 - `5`: `main_sun_dfbc_indi`
 - `6`: `main_tal`
 - `7`: `main_geometric_indi`
+- `8`: `px4_direct` (bypass the external controller and send P/V/A/yaw to PX4)
 
-All controllers publish PX4/MAVROS body-rate setpoints and normalized collective thrust. The ROS side does not own an angular-rate loop gain such as `KOmega`; PX4's internal rate controller is treated as the inner loop.
+Controller types `0` through `7` publish PX4/MAVROS body-rate setpoints and normalized collective thrust. The ROS side does not own an angular-rate loop gain such as `KOmega`; PX4's internal rate controller is treated as the inner loop. Type `8` bypasses these control laws and streams P/V/A/yaw setpoints to PX4's position controller.
 
 If the UAV does not takeoff, please open QGroundControl and enable virtual joystick as mentioned [here](https://docs.qgroundcontrol.com/master/en/SettingsView/VirtualJoystick.html)
 
@@ -226,7 +237,7 @@ Trajectory publisher publishes continous trajectories to the trajectory_controll
 - Subscribed Topics
     - /trajectory_publisher/motionselector ([std_msgs/int32](http://docs.ros.org/api/std_msgs/html/msg/Int32.html));
     - /mavros/local_position/pose ( [geometry_msgs/PoseStamped](http://docs.ros.org/kinetic/api/geometry_msgs/html/msg/PoseStamped.html) )
-    - /mavros/local_position/velocity( [geometry_msgs/TwistStamped](http://docs.ros.org/api/geometry_msgs/html/msg/TwistStamped.html) )
+    - /mavros/local_position/velocity_local( [geometry_msgs/TwistStamped](http://docs.ros.org/api/geometry_msgs/html/msg/TwistStamped.html) )
 
 ## Contact
 Jaeyoung Lim 	jalim@ethz.ch

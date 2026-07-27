@@ -20,6 +20,7 @@ enum class ControllerType {
   MAIN_SUN_DFBC_INDI = 5,
   MAIN_TAL = 6,
   MAIN_GEOMETRIC_INDI = 7,
+  PX4_DIRECT = 8,
 };
 
 struct VehicleState {

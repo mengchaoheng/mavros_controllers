@@ -39,8 +39,9 @@ Values:
 - `5`: `main_sun_dfbc_indi`
 - `6`: `main_tal`
 - `7`: `main_geometric_indi`
+- `8`: `px4_direct` (route P/V/A/yaw to PX4 without running an external control law)
 
-All controllers output:
+Controller types `0` through `7` output:
 
 ```text
 body_rate_sp = Omega_ref + KR * attitude_error

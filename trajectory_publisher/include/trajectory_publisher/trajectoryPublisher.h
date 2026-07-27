@@ -51,11 +51,14 @@
 #include <geometry_msgs/PoseStamped.h>
 #include <geometry_msgs/TwistStamped.h>
 #include <mavconn/mavlink_dialect.h>
+#include <mavros_msgs/CommandBool.h>
 #include <mavros_msgs/GlobalPositionTarget.h>
 #include <mavros_msgs/PositionTarget.h>
+#include <mavros_msgs/SetMode.h>
 #include <mavros_msgs/State.h>
 #include <nav_msgs/Path.h>
 #include <ros/ros.h>
+#include <std_msgs/Bool.h>
 #include <std_msgs/Int32.h>
 #include <std_msgs/Float32.h>
 #include <std_msgs/String.h>
@@ -86,10 +89,16 @@ class trajectoryPublisher {
   ros::Subscriber mavposeSub_;
   ros::Subscriber mavtwistSub_;
   ros::Subscriber mavstate_sub_;
+  ros::Subscriber direct_mode_sub_;
   ros::ServiceServer trajtriggerServ_;
+  ros::ServiceClient arming_client_;
+  ros::ServiceClient set_mode_client_;
   ros::Timer trajloop_timer_;
   ros::Timer refloop_timer_;
+  ros::Timer offboard_manager_timer_;
   ros::Time start_time_, curr_time_;
+  ros::Time last_offboard_request_;
+  ros::Time last_arm_request_;
 
   nav_msgs::Path refTrajectory_;
   nav_msgs::Path primTrajectory_;
@@ -135,14 +144,21 @@ class trajectoryPublisher {
   double trajectory_start_ramp_min_duration_;
   double trajectory_start_ramp_velocity_limit_;
   double trajectory_start_ramp_acceleration_limit_;
+  double offboard_request_interval_;
+  double arm_request_interval_;
   double max_jerk_;
   int pubreference_type_;
   int num_primitives_;
   int motion_selector_;
+  int preflight_setpoint_count_;
+  int direct_setpoint_count_;
   bool takeoff_before_trajectory_;
   bool adaptive_trajectory_start_ramp_;
   bool trajectory_yaw_lock_;
   bool trajectory_started_;
+  bool controller_direct_mode_;
+  bool auto_offboard_;
+  bool auto_arm_;
   bool first_reconfigure_;
   bool transition_active_;
   int omega_mode_;
@@ -202,11 +218,13 @@ class trajectoryPublisher {
   void applyTrajectoryStartRamp(double trajectory_time);
   void loopCallback(const ros::TimerEvent& event);
   void refCallback(const ros::TimerEvent& event);
+  void offboardManagerCallback(const ros::TimerEvent& event);
   bool triggerCallback(std_srvs::SetBool::Request& req, std_srvs::SetBool::Response& res);
   void motionselectorCallback(const std_msgs::Int32& selector);
   void mavposeCallback(const geometry_msgs::PoseStamped& msg);
   void mavtwistCallback(const geometry_msgs::TwistStamped& msg);
   void mavstateCallback(const mavros_msgs::State::ConstPtr& msg);
+  void directModeCallback(const std_msgs::Bool::ConstPtr& msg);
 };
 
 #endif

@@ -90,6 +90,12 @@
 
   <arg name="initpos_z" default="2.0" />
   <arg name="reference_type" default="2" />
+  <arg name="updaterate" default="0.01" />
+  <arg name="auto_offboard" default="false" />
+  <arg name="auto_arm" default="false" />
+  <arg name="preflight_setpoint_count" default="100" />
+  <arg name="offboard_request_interval" default="2.0" />
+  <arg name="arm_request_interval" default="2.0" />
   <arg name="takeoff_before_trajectory" default="true" />
   <arg name="takeoff_position_tolerance" default="0.25" />
   <arg name="takeoff_velocity_tolerance" default="0.5" />
@@ -184,6 +190,12 @@
         <param name="fast_circle_theta0" value="$(arg fast_circle_theta0)" />
         <param name="initpos_z" value="$(arg initpos_z)" />
         <param name="reference_type" value="$(arg reference_type)" />
+        <param name="updaterate" value="$(arg updaterate)" />
+        <param name="auto_offboard" value="$(arg auto_offboard)" />
+        <param name="auto_arm" value="$(arg auto_arm)" />
+        <param name="preflight_setpoint_count" value="$(arg preflight_setpoint_count)" />
+        <param name="offboard_request_interval" value="$(arg offboard_request_interval)" />
+        <param name="arm_request_interval" value="$(arg arm_request_interval)" />
         <param name="takeoff_before_trajectory" value="$(arg takeoff_before_trajectory)" />
         <param name="takeoff_position_tolerance" value="$(arg takeoff_position_tolerance)" />
         <param name="takeoff_velocity_tolerance" value="$(arg takeoff_velocity_tolerance)" />

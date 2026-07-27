@@ -95,10 +95,11 @@ trajectoryPublisher::trajectoryPublisher(const ros::NodeHandle& nh, const ros::N
     : nh_(nh),
       nh_private_(nh_private),
       motion_selector_(0),
+      controller_direct_mode_(false),
       first_reconfigure_(true),
       transition_active_(false),
-      transition_stage_(0),
-      omega_mode_(TRAJ_OMEGA_FIXED) {
+      omega_mode_(TRAJ_OMEGA_FIXED),
+      transition_stage_(0) {
   trajectoryPub_ = nh_.advertise<nav_msgs::Path>("trajectory_publisher/trajectory", 1);
   referencePub_ = nh_.advertise<geometry_msgs::TwistStamped>("reference/setpoint", 1);
   flatreferencePub_ = nh_.advertise<controller_msgs::FlatTarget>("reference/flatsetpoint", 1);
@@ -110,15 +111,27 @@ trajectoryPublisher::trajectoryPublisher(const ros::NodeHandle& nh, const ros::N
                     ros::TransportHints().tcpNoDelay());
   mavposeSub_ = nh_.subscribe("mavros/local_position/pose", 1, &trajectoryPublisher::mavposeCallback, this,
                               ros::TransportHints().tcpNoDelay());
-  mavtwistSub_ = nh_.subscribe("mavros/local_position/velocity", 1, &trajectoryPublisher::mavtwistCallback, this,
+  mavtwistSub_ = nh_.subscribe("mavros/local_position/velocity_local", 1, &trajectoryPublisher::mavtwistCallback, this,
                                ros::TransportHints().tcpNoDelay());
   mavstate_sub_ = nh_.subscribe("mavros/state", 1, &trajectoryPublisher::mavstateCallback, this,
                                 ros::TransportHints().tcpNoDelay());
+  direct_mode_sub_ =
+      nh_.subscribe("trajectory_publisher/direct_mode", 1, &trajectoryPublisher::directModeCallback, this,
+                    ros::TransportHints().tcpNoDelay());
+
+  std::string arming_service;
+  std::string set_mode_service;
+  nh_private_.param<std::string>("arming_service", arming_service, "/mavros/cmd/arming");
+  nh_private_.param<std::string>("set_mode_service", set_mode_service, "/mavros/set_mode");
+  arming_client_ = nh_.serviceClient<mavros_msgs::CommandBool>(arming_service);
+  set_mode_client_ = nh_.serviceClient<mavros_msgs::SetMode>(set_mode_service);
 
   nh_private_.param<double>("updaterate", controlUpdate_dt_, 0.01);
   controlUpdate_dt_ = std::max(0.001, controlUpdate_dt_);
   trajloop_timer_ = nh_.createTimer(ros::Duration(0.1), &trajectoryPublisher::loopCallback, this);
   refloop_timer_ = nh_.createTimer(ros::Duration(controlUpdate_dt_), &trajectoryPublisher::refCallback, this);
+  offboard_manager_timer_ =
+      nh_.createTimer(ros::Duration(0.1), &trajectoryPublisher::offboardManagerCallback, this);
 
   trajtriggerServ_ = nh_.advertiseService("start", &trajectoryPublisher::triggerCallback, this);
 
@@ -161,8 +174,24 @@ trajectoryPublisher::trajectoryPublisher(const ros::NodeHandle& nh, const ros::N
   nh_private_.param<double>("trajectory_switch_stop_speed_threshold", trajectory_switch_stop_speed_threshold_, 0.2);
   nh_private_.param<int>("number_of_primitives", num_primitives_, 7);
   nh_private_.param<int>("reference_type", pubreference_type_, 2);
+  nh_private_.param<bool>("auto_offboard", auto_offboard_, false);
+  nh_private_.param<bool>("auto_arm", auto_arm_, false);
+  nh_private_.param<int>("preflight_setpoint_count", preflight_setpoint_count_, 100);
+  nh_private_.param<double>("offboard_request_interval", offboard_request_interval_, 2.0);
+  nh_private_.param<double>("arm_request_interval", arm_request_interval_, 2.0);
+  preflight_setpoint_count_ = std::max(1, preflight_setpoint_count_);
+  offboard_request_interval_ = std::max(0.1, offboard_request_interval_);
+  arm_request_interval_ = std::max(0.1, arm_request_interval_);
+  direct_setpoint_count_ = 0;
+  last_offboard_request_ = ros::Time(0);
+  last_arm_request_ = ros::Time(0);
   trajectory_start_ramp_configured_duration_ = std::max(0.0, trajectory_start_ramp_configured_duration_);
   trajectory_start_ramp_duration_ = trajectory_start_ramp_configured_duration_;
+
+  if ((auto_offboard_ || auto_arm_) && pubreference_type_ != REF_SETPOINTRAW) {
+    ROS_WARN("auto_offboard/auto_arm are only active when reference_type=%d (direct PX4 mode).",
+             REF_SETPOINTRAW);
+  }
 
   readShapeParams();
 
@@ -746,7 +775,11 @@ void trajectoryPublisher::pubrefSetpointRaw() {
   mavros_msgs::PositionTarget msg;
   msg.header.stamp = ros::Time::now();
   msg.header.frame_id = "map";
-  msg.type_mask = 0;
+  // MAVROS receives local setpoints in ROS ENU and converts them to PX4 NED.
+  // Position, velocity and acceleration are sent together so PX4 can use
+  // velocity/acceleration as feed-forward terms in its internal controller.
+  msg.coordinate_frame = mavros_msgs::PositionTarget::FRAME_LOCAL_NED;
+  msg.type_mask = mavros_msgs::PositionTarget::IGNORE_YAW_RATE;
   msg.position.x = p_targ(0);
   msg.position.y = p_targ(1);
   msg.position.z = p_targ(2);
@@ -759,6 +792,9 @@ void trajectoryPublisher::pubrefSetpointRaw() {
   msg.yaw = yaw_targ_;
   msg.yaw_rate = 0.0;
   rawreferencePub_.publish(msg);
+  if (direct_setpoint_count_ < preflight_setpoint_count_) {
+    ++direct_setpoint_count_;
+  }
 }
 
 void trajectoryPublisher::pubrefSetpointRawGlobal() {
@@ -782,7 +818,21 @@ void trajectoryPublisher::pubrefSetpointRawGlobal() {
   global_rawreferencePub_.publish(msg);
 }
 
-void trajectoryPublisher::mavstateCallback(const mavros_msgs::State::ConstPtr& msg) { current_state_ = *msg; }
+void trajectoryPublisher::mavstateCallback(const mavros_msgs::State::ConstPtr& msg) {
+  if (current_state_.connected != msg->connected) {
+    direct_setpoint_count_ = 0;
+  }
+  current_state_ = *msg;
+}
+
+void trajectoryPublisher::directModeCallback(const std_msgs::Bool::ConstPtr& msg) {
+  if (controller_direct_mode_ == msg->data) {
+    return;
+  }
+
+  controller_direct_mode_ = msg->data;
+  ROS_INFO("PX4 direct trajectory route %s.", controller_direct_mode_ ? "enabled" : "disabled");
+}
 
 void trajectoryPublisher::loopCallback(const ros::TimerEvent& event) {
   pubrefTrajectory(motion_selector_);
@@ -802,6 +852,53 @@ void trajectoryPublisher::refCallback(const ros::TimerEvent& event) {
     default:
       pubflatrefState();
       break;
+  }
+
+  if (controller_direct_mode_ && pubreference_type_ != REF_SETPOINTRAW) {
+    pubrefSetpointRaw();
+  }
+}
+
+void trajectoryPublisher::offboardManagerCallback(const ros::TimerEvent& event) {
+  if (pubreference_type_ != REF_SETPOINTRAW || (!auto_offboard_ && !auto_arm_) || !current_state_.connected) {
+    return;
+  }
+
+  if (direct_setpoint_count_ < preflight_setpoint_count_) {
+    ROS_INFO_THROTTLE(1.0, "Priming PX4 OFFBOARD input: %d/%d direct setpoints.",
+                      direct_setpoint_count_, preflight_setpoint_count_);
+    return;
+  }
+
+  const ros::Time now = ros::Time::now();
+  if (current_state_.mode != "OFFBOARD") {
+    if (!auto_offboard_ || now - last_offboard_request_ < ros::Duration(offboard_request_interval_)) {
+      return;
+    }
+
+    mavros_msgs::SetMode mode_cmd;
+    mode_cmd.request.custom_mode = "OFFBOARD";
+    if (set_mode_client_.call(mode_cmd) && mode_cmd.response.mode_sent) {
+      ROS_INFO("PX4 OFFBOARD mode requested.");
+    } else {
+      ROS_WARN("PX4 OFFBOARD mode request failed; will retry.");
+    }
+    last_offboard_request_ = now;
+    return;
+  }
+
+  const ros::Time last_arm_related_request =
+      last_arm_request_ > last_offboard_request_ ? last_arm_request_ : last_offboard_request_;
+  if (auto_arm_ && !current_state_.armed &&
+      now - last_arm_related_request >= ros::Duration(arm_request_interval_)) {
+    mavros_msgs::CommandBool arm_cmd;
+    arm_cmd.request.value = true;
+    if (arming_client_.call(arm_cmd) && arm_cmd.response.success) {
+      ROS_INFO("PX4 arming requested.");
+    } else {
+      ROS_WARN("PX4 arming request failed; will retry.");
+    }
+    last_arm_request_ = now;
   }
 }
 

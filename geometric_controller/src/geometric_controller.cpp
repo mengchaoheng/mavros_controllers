@@ -65,7 +65,7 @@ double sanitizeCmdloopRate(double rate) {
 
 int sanitizeControllerType(int controller_type) {
   if (controller_type < static_cast<int>(geometric_controller::ControllerType::LEGACY_GEOMETRIC) ||
-      controller_type > static_cast<int>(geometric_controller::ControllerType::MAIN_GEOMETRIC_INDI)) {
+      controller_type > static_cast<int>(geometric_controller::ControllerType::PX4_DIRECT)) {
     return static_cast<int>(geometric_controller::ControllerType::LEGACY_GEOMETRIC);
   }
   return controller_type;
@@ -102,6 +102,7 @@ geometricCtrl::geometricCtrl(const ros::NodeHandle &nh, const ros::NodeHandle &n
   target_pose_pub_ = nh_.advertise<geometry_msgs::PoseStamped>("mavros/setpoint_position/local", 10);
   posehistoryPub_ = nh_.advertise<nav_msgs::Path>("geometric_controller/path", 10);
   systemstatusPub_ = nh_.advertise<mavros_msgs::CompanionProcessStatus>("mavros/companion_process/status", 1);
+  directModePub_ = nh_.advertise<std_msgs::Bool>("trajectory_publisher/direct_mode", 1, true);
   arming_client_ = nh_.serviceClient<mavros_msgs::CommandBool>("mavros/cmd/arming");
   set_mode_client_ = nh_.serviceClient<mavros_msgs::SetMode>("mavros/set_mode");
   land_service_ = nh_.advertiseService("land", &geometricCtrl::landCallback, this);
@@ -163,6 +164,17 @@ void geometricCtrl::selectActiveController(int controller_type) {
   controller_type_ = sanitized_type;
   const auto requested_type = static_cast<geometric_controller::ControllerType>(sanitized_type);
 
+  std_msgs::Bool direct_mode_msg;
+  direct_mode_msg.data = requested_type == geometric_controller::ControllerType::PX4_DIRECT;
+  directModePub_.publish(direct_mode_msg);
+
+  if (direct_mode_msg.data) {
+    active_controller_type_ = requested_type;
+    active_controller_.reset();
+    ROS_INFO("Active controller: px4_direct (external control law bypassed)");
+    return;
+  }
+
   switch (requested_type) {
     case geometric_controller::ControllerType::LEGACY_GEOMETRIC:
       active_controller_type_ = requested_type;
@@ -196,6 +208,8 @@ void geometricCtrl::selectActiveController(int controller_type) {
       active_controller_type_ = requested_type;
       active_controller_ = std::make_shared<geometric_controller::MainGeometricINDIController>();
       break;
+    case geometric_controller::ControllerType::PX4_DIRECT:
+      return;
     default:
       ROS_WARN("Controller type %d is reserved but not implemented yet. Falling back to legacy_geometric.",
                sanitized_type);
@@ -364,6 +378,16 @@ void geometricCtrl::cmdloopCallback(const ros::TimerEvent &event) {
     case MISSION_EXECUTION: {
       const geometric_controller::VehicleState state = getVehicleState();
       const geometric_controller::FlatReference reference = getFlatReference();
+
+      if (active_controller_type_ == geometric_controller::ControllerType::PX4_DIRECT) {
+        Eigen::Vector4d target_attitude;
+        target_attitude << std::cos(0.5 * reference.yaw), 0.0, 0.0, std::sin(0.5 * reference.yaw);
+        pubReferencePose(reference.position, target_attitude);
+        appendPoseHistory();
+        pubPoseHistory();
+        break;
+      }
+
       const geometric_controller::ControllerParams params = getControllerParams();
       const geometric_controller::ControllerCommand command =
           active_controller_->update(state, reference, params, event.current_real.toSec() - event.last_real.toSec());
