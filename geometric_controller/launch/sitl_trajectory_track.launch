@@ -112,6 +112,8 @@
   <arg name="trajectory_switch_transition_velocity_limit" default="1.2" />
   <arg name="trajectory_switch_transition_acceleration_limit" default="2.5" />
   <arg name="trajectory_switch_stop_speed_threshold" default="0.2" />
+  <arg name="trajectory_stop_deceleration_limit" default="5.0" />
+  <arg name="trajectory_stop_min_duration" default="0.3" />
 
   <node if="$(arg run_geometric_controller)" pkg="geometric_controller" type="geometric_controller_node" name="geometric_controller" output="screen">
         <param name="mav_name" type="string" value="$(arg mav_name)" />
@@ -212,9 +214,16 @@
         <param name="trajectory_switch_transition_velocity_limit" value="$(arg trajectory_switch_transition_velocity_limit)" />
         <param name="trajectory_switch_transition_acceleration_limit" value="$(arg trajectory_switch_transition_acceleration_limit)" />
         <param name="trajectory_switch_stop_speed_threshold" value="$(arg trajectory_switch_stop_speed_threshold)" />
+        <param name="trajectory_stop_deceleration_limit" value="$(arg trajectory_stop_deceleration_limit)" />
+        <param name="trajectory_stop_min_duration" value="$(arg trajectory_stop_min_duration)" />
   </node>
 
-  <node if="$(arg rqt_reconfigure)" pkg="rqt_reconfigure" type="rqt_reconfigure" output="screen" name="rqt_reconfigure" />
+  <node if="$(arg rqt_reconfigure)"
+        pkg="rqt_gui"
+        type="rqt_gui"
+        output="screen"
+        name="trajectory_reconfigure"
+        args="--standalone trajectory_publisher/TrajectoryReconfigure --args /trajectory_publisher" />
 
   <include if="$(arg run_mavros)" file="$(find mavros)/launch/node.launch">
       <arg name="pluginlists_yaml" value="$(find mavros)/launch/px4_pluginlists.yaml" />

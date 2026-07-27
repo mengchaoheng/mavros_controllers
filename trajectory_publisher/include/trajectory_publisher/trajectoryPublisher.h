@@ -91,12 +91,13 @@ class trajectoryPublisher {
   ros::Subscriber mavstate_sub_;
   ros::Subscriber direct_mode_sub_;
   ros::ServiceServer trajtriggerServ_;
+  ros::ServiceServer private_trajtriggerServ_;
   ros::ServiceClient arming_client_;
   ros::ServiceClient set_mode_client_;
   ros::Timer trajloop_timer_;
   ros::Timer refloop_timer_;
   ros::Timer offboard_manager_timer_;
-  ros::Time start_time_, curr_time_;
+  ros::Time start_time_, omega_schedule_start_time_, curr_time_;
   ros::Time last_offboard_request_;
   ros::Time last_arm_request_;
 
@@ -117,7 +118,9 @@ class trajectoryPublisher {
   Eigen::Matrix<double, 6, 3> transition_position_coeffs_;
   Eigen::Matrix<double, 6, 1> transition_yaw_coeffs_;
   Eigen::Vector3d transition_final_target_;
+  Eigen::Vector3d holding_target_;
   double yaw_targ_;
+  double holding_yaw_;
   double trajectory_yaw_fixed_;
   double omega_value_;
   double omega_start_;
@@ -132,6 +135,8 @@ class trajectoryPublisher {
   double trajectory_switch_transition_velocity_limit_;
   double trajectory_switch_transition_acceleration_limit_;
   double trajectory_switch_stop_speed_threshold_;
+  double trajectory_stop_deceleration_limit_;
+  double trajectory_stop_min_duration_;
   double theta_ = 0.0;
   double controlUpdate_dt_;
   double primitive_duration_;
@@ -156,6 +161,9 @@ class trajectoryPublisher {
   bool adaptive_trajectory_start_ramp_;
   bool trajectory_yaw_lock_;
   bool trajectory_started_;
+  bool tracking_requested_;
+  bool start_transition_pending_;
+  bool mavpose_received_;
   bool controller_direct_mode_;
   bool auto_offboard_;
   bool auto_arm_;
@@ -194,6 +202,12 @@ class trajectoryPublisher {
   void readOmegaProfiles();
   void readTrajectoryType();
   void resetTrajectoryStart();
+  void startTracking();
+  void stopTracking();
+  void startStopTransition();
+  void setHoldingReference();
+  void evaluateTrajectoryReference(double trajectory_time, double omega_time);
+  void rebaseOmegaSchedule();
   void startTrajectoryTransition();
   void startTransitionSegment(const Eigen::Vector3d& position_start, const Eigen::Vector3d& velocity_start,
                               const Eigen::Vector3d& acceleration_start, const Eigen::Vector3d& position_goal,
@@ -206,7 +220,7 @@ class trajectoryPublisher {
   double clampToOmegaRange(double value, int type) const;
   bool activeShapeGeometryChanged(const trajectory_publisher::TrajectoryPublisherConfig& config) const;
   void updateOmegaProfilesFromConfig(const trajectory_publisher::TrajectoryPublisherConfig& config);
-  void updateReferenceYaw(double trajectory_time);
+  void updateReferenceYaw(double trajectory_time, double omega_time);
   void seedDynamicReconfigure(trajectory_publisher::TrajectoryPublisherConfig& config);
   void updateShapeParamsFromConfig(const trajectory_publisher::TrajectoryPublisherConfig& config);
   bool configChangesTrajectory(const trajectory_publisher::TrajectoryPublisherConfig& config) const;

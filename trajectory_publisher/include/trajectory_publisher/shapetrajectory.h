@@ -127,8 +127,9 @@ class shapetrajectory : public trajectory {
   static double sanitizePositive(double value, double fallback);
   static ScalarState trigDerivatives(double amplitude, double theta, double theta_dot, double theta_ddot,
                                      double theta_3, const std::string& kind);
-  ReferenceState evaluate(double time) const;
-  void thetaState(double time, double& theta, double& theta_dot, double& theta_ddot, double& theta_3) const;
+  ReferenceState evaluate(double trajectory_time, double omega_time) const;
+  void thetaState(double omega_time, double& theta, double& theta_dot, double& theta_ddot, double& theta_3) const;
+  double phaseAdvance(double omega_time) const;
   void setHeadingFromVelocity(ReferenceState& ref, double default_yaw) const;
   double typeTheta0() const;
 
@@ -148,12 +149,20 @@ class shapetrajectory : public trajectory {
   void generatePrimitives(Eigen::Vector3d pos, Eigen::Vector3d vel, Eigen::Vector3d jerk);
   void generatePrimitives(Eigen::Vector3d pos, Eigen::Vector3d vel, Eigen::Vector3d acc, Eigen::Vector3d jerk);
   Eigen::Vector3d getPosition(double time);
+  Eigen::Vector3d getPosition(double trajectory_time, double omega_time);
   Eigen::Vector3d getVelocity(double time);
+  Eigen::Vector3d getVelocity(double trajectory_time, double omega_time);
   Eigen::Vector3d getAcceleration(double time);
+  Eigen::Vector3d getAcceleration(double trajectory_time, double omega_time);
   Eigen::Vector3d getJerk(double time);
+  Eigen::Vector3d getJerk(double trajectory_time, double omega_time);
   double getYaw(double time);
+  double getYaw(double trajectory_time, double omega_time);
   double getYawRate(double time);
+  double getYawRate(double trajectory_time, double omega_time);
   double getYawAcceleration(double time);
+  double getYawAcceleration(double trajectory_time, double omega_time);
+  double getPhaseAdvance(double omega_time) const;
   double getsamplingTime() { return dt_; };
   double getDuration() { return T_; };
   nav_msgs::Path getSegment();

@@ -146,13 +146,34 @@ const char* shapetrajectory::typeName(int type) {
   }
 }
 
-void shapetrajectory::thetaState(double time, double& theta, double& theta_dot, double& theta_ddot,
+double shapetrajectory::phaseAdvance(double omega_time) const {
+  const double t = std::max(0.0, omega_time);
+  if (omega_mode_ == TRAJ_OMEGA_FIXED) {
+    return omega_value_ * t;
+  }
+
+  const double duration = sanitizePositive(omega_duration_, 20.0);
+  const double t_clamped = std::min(t, duration);
+  const double omega_delta = omega_end_ - omega_start_;
+  double phase = omega_start_ * t_clamped;
+  if (omega_mode_ == TRAJ_OMEGA_LINEAR) {
+    phase += 0.5 * omega_delta * t_clamped * t_clamped / duration;
+  } else {
+    phase += omega_delta * std::pow(t_clamped, 3.0) / (3.0 * duration * duration);
+  }
+  if (t > duration) {
+    phase += omega_end_ * (t - duration);
+  }
+  return phase;
+}
+
+void shapetrajectory::thetaState(double omega_time, double& theta, double& theta_dot, double& theta_ddot,
                                  double& theta_3) const {
-  const double t = std::max(0.0, time);
+  const double t = std::max(0.0, omega_time);
   const double duration = sanitizePositive(omega_duration_, 20.0);
 
   if (omega_mode_ == TRAJ_OMEGA_FIXED) {
-    theta = typeTheta0() + phase_shift_ + omega_value_ * t;
+    theta = typeTheta0() + phase_shift_ + phaseAdvance(t);
     theta_dot = omega_value_;
     theta_ddot = 0.0;
     theta_3 = 0.0;
@@ -240,14 +261,14 @@ void shapetrajectory::setHeadingFromVelocity(ReferenceState& ref, double default
   ref.yaw_acceleration = (num_dot * speed2 - num * den_dot) / (speed2 * speed2);
 }
 
-shapetrajectory::ReferenceState shapetrajectory::evaluate(double time) const {
+shapetrajectory::ReferenceState shapetrajectory::evaluate(double trajectory_time, double omega_time) const {
   ReferenceState ref;
   double theta, theta_dot, theta_ddot, theta_3;
-  thetaState(time, theta, theta_dot, theta_ddot, theta_3);
+  thetaState(omega_time, theta, theta_dot, theta_ddot, theta_3);
 
   const double x0 = traj_origin_.x();
   const double y0 = traj_origin_.y();
-  const double t = std::max(0.0, time);
+  const double t = std::max(0.0, trajectory_time);
 
   switch (type_) {
     case TRAJ_FIGURE8_VERTICAL: {
@@ -330,19 +351,49 @@ void shapetrajectory::generatePrimitives(Eigen::Vector3d pos, Eigen::Vector3d ve
 void shapetrajectory::generatePrimitives(Eigen::Vector3d pos, Eigen::Vector3d vel, Eigen::Vector3d acc,
                                          Eigen::Vector3d jerk) {}
 
-Eigen::Vector3d shapetrajectory::getPosition(double time) { return evaluate(time).p; }
+Eigen::Vector3d shapetrajectory::getPosition(double time) { return evaluate(time, time).p; }
 
-Eigen::Vector3d shapetrajectory::getVelocity(double time) { return evaluate(time).v; }
+Eigen::Vector3d shapetrajectory::getPosition(double trajectory_time, double omega_time) {
+  return evaluate(trajectory_time, omega_time).p;
+}
 
-Eigen::Vector3d shapetrajectory::getAcceleration(double time) { return evaluate(time).a; }
+Eigen::Vector3d shapetrajectory::getVelocity(double time) { return evaluate(time, time).v; }
 
-Eigen::Vector3d shapetrajectory::getJerk(double time) { return evaluate(time).j; }
+Eigen::Vector3d shapetrajectory::getVelocity(double trajectory_time, double omega_time) {
+  return evaluate(trajectory_time, omega_time).v;
+}
 
-double shapetrajectory::getYaw(double time) { return evaluate(time).yaw; }
+Eigen::Vector3d shapetrajectory::getAcceleration(double time) { return evaluate(time, time).a; }
 
-double shapetrajectory::getYawRate(double time) { return evaluate(time).yaw_rate; }
+Eigen::Vector3d shapetrajectory::getAcceleration(double trajectory_time, double omega_time) {
+  return evaluate(trajectory_time, omega_time).a;
+}
 
-double shapetrajectory::getYawAcceleration(double time) { return evaluate(time).yaw_acceleration; }
+Eigen::Vector3d shapetrajectory::getJerk(double time) { return evaluate(time, time).j; }
+
+Eigen::Vector3d shapetrajectory::getJerk(double trajectory_time, double omega_time) {
+  return evaluate(trajectory_time, omega_time).j;
+}
+
+double shapetrajectory::getYaw(double time) { return evaluate(time, time).yaw; }
+
+double shapetrajectory::getYaw(double trajectory_time, double omega_time) {
+  return evaluate(trajectory_time, omega_time).yaw;
+}
+
+double shapetrajectory::getYawRate(double time) { return evaluate(time, time).yaw_rate; }
+
+double shapetrajectory::getYawRate(double trajectory_time, double omega_time) {
+  return evaluate(trajectory_time, omega_time).yaw_rate;
+}
+
+double shapetrajectory::getYawAcceleration(double time) { return evaluate(time, time).yaw_acceleration; }
+
+double shapetrajectory::getYawAcceleration(double trajectory_time, double omega_time) {
+  return evaluate(trajectory_time, omega_time).yaw_acceleration;
+}
+
+double shapetrajectory::getPhaseAdvance(double omega_time) const { return phaseAdvance(omega_time); }
 
 nav_msgs::Path shapetrajectory::getSegment() {
   Eigen::Vector3d targetPosition;

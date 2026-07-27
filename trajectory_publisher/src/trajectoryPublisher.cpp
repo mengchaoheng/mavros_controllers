@@ -95,6 +95,9 @@ trajectoryPublisher::trajectoryPublisher(const ros::NodeHandle& nh, const ros::N
     : nh_(nh),
       nh_private_(nh_private),
       motion_selector_(0),
+      tracking_requested_(false),
+      start_transition_pending_(false),
+      mavpose_received_(false),
       controller_direct_mode_(false),
       first_reconfigure_(true),
       transition_active_(false),
@@ -134,6 +137,7 @@ trajectoryPublisher::trajectoryPublisher(const ros::NodeHandle& nh, const ros::N
       nh_.createTimer(ros::Duration(0.1), &trajectoryPublisher::offboardManagerCallback, this);
 
   trajtriggerServ_ = nh_.advertiseService("start", &trajectoryPublisher::triggerCallback, this);
+  private_trajtriggerServ_ = nh_private_.advertiseService("start", &trajectoryPublisher::triggerCallback, this);
 
   nh_private_.param<double>("initpos_x", init_pos_x_, 0.0);
   nh_private_.param<double>("initpos_y", init_pos_y_, 0.0);
@@ -172,6 +176,8 @@ trajectoryPublisher::trajectoryPublisher(const ros::NodeHandle& nh, const ros::N
   nh_private_.param<double>("trajectory_switch_transition_acceleration_limit",
                             trajectory_switch_transition_acceleration_limit_, 2.5);
   nh_private_.param<double>("trajectory_switch_stop_speed_threshold", trajectory_switch_stop_speed_threshold_, 0.2);
+  nh_private_.param<double>("trajectory_stop_deceleration_limit", trajectory_stop_deceleration_limit_, 5.0);
+  nh_private_.param<double>("trajectory_stop_min_duration", trajectory_stop_min_duration_, 0.3);
   nh_private_.param<int>("number_of_primitives", num_primitives_, 7);
   nh_private_.param<int>("reference_type", pubreference_type_, 2);
   nh_private_.param<bool>("auto_offboard", auto_offboard_, false);
@@ -234,14 +240,19 @@ trajectoryPublisher::trajectoryPublisher(const ros::NodeHandle& nh, const ros::N
   transition_position_coeffs_.setZero();
   transition_yaw_coeffs_.setZero();
   transition_final_target_ << init_pos_x_, init_pos_y_, init_pos_z_;
+  holding_target_ = transition_final_target_;
+  holding_yaw_ = yaw_targ_;
   transition_segment_duration_ = 0.0;
   motion_selector_ = 0;
   trajectory_started_ = false;
   start_time_ = ros::Time::now();
+  omega_schedule_start_time_ = start_time_;
 
   initializePrimitives(trajectory_type_);
   updateTakeoffTarget();
-  setTakeoffReference();
+  holding_target_ = p_mav_;
+  holding_yaw_ = trajectory_yaw_lock_ ? trajectory_yaw_fixed_ : 0.0;
+  setHoldingReference();
 
   dynamic_reconfigure::Server<trajectory_publisher::TrajectoryPublisherConfig>::CallbackType dyn_cb;
   dyn_cb = boost::bind(&trajectoryPublisher::dynamicReconfigureCallback, this, _1, _2);
@@ -383,62 +394,102 @@ void trajectoryPublisher::readShapeParams() {
 void trajectoryPublisher::updateReference() {
   curr_time_ = ros::Time::now();
   if (transition_active_) {
-    if (takeoff_before_trajectory_ && current_state_.mode != "OFFBOARD") {
+    if (current_state_.mode != "OFFBOARD" || !current_state_.armed) {
       transition_active_ = false;
       trajectory_started_ = false;
+      start_transition_pending_ = tracking_requested_;
       start_time_ = curr_time_;
-      setTakeoffReference();
+      omega_schedule_start_time_ = curr_time_;
+      holding_target_ = p_mav_;
+      holding_yaw_ = yaw_targ_;
+      setHoldingReference();
       return;
     }
     updateTransitionReference();
     return;
   }
 
-  if (!takeoff_before_trajectory_) {
-    if (current_state_.mode != "OFFBOARD") {
-      start_time_ = ros::Time::now();
-    }
-    trigger_time_ = (curr_time_ - start_time_).toSec();
-
-    p_targ = motionPrimitives_.at(motion_selector_)->getPosition(trigger_time_);
-    v_targ = motionPrimitives_.at(motion_selector_)->getVelocity(trigger_time_);
-    if (pubreference_type_ != 0) {
-      a_targ = motionPrimitives_.at(motion_selector_)->getAcceleration(trigger_time_);
-      j_targ = motionPrimitives_.at(motion_selector_)->getJerk(trigger_time_);
-    }
-    updateReferenceYaw(trigger_time_);
+  if (!tracking_requested_) {
+    trajectory_started_ = false;
+    setHoldingReference();
     return;
   }
 
-  if (current_state_.mode != "OFFBOARD") {
+  if (start_transition_pending_) {
     trajectory_started_ = false;
+    holding_target_ = p_mav_;
+    holding_yaw_ = yaw_targ_;
+    setHoldingReference();
+    if (!mavpose_received_ || current_state_.mode != "OFFBOARD" || !current_state_.armed) {
+      return;
+    }
+    start_transition_pending_ = false;
+    startTrajectoryTransition();
+    updateTransitionReference();
+    return;
+  }
+
+  if (current_state_.mode != "OFFBOARD" || !current_state_.armed) {
+    trajectory_started_ = false;
+    start_transition_pending_ = true;
     start_time_ = curr_time_;
-    setTakeoffReference();
+    omega_schedule_start_time_ = curr_time_;
+    holding_target_ = p_mav_;
+    holding_yaw_ = yaw_targ_;
+    setHoldingReference();
+    return;
+  }
+
+  if (!takeoff_before_trajectory_) {
+    if (!trajectory_started_) {
+      start_time_ = curr_time_;
+      omega_schedule_start_time_ = curr_time_;
+      trajectory_started_ = true;
+    }
+    trigger_time_ = (curr_time_ - start_time_).toSec();
+    const double omega_time = std::max(0.0, (curr_time_ - omega_schedule_start_time_).toSec());
+    evaluateTrajectoryReference(trigger_time_, omega_time);
     return;
   }
 
   if (!trajectory_started_) {
-    if (!current_state_.armed || !takeoffTargetReached()) {
+    if (!takeoffTargetReached()) {
       setTakeoffReference();
       return;
     }
 
     start_time_ = curr_time_;
+    omega_schedule_start_time_ = curr_time_;
     updateTrajectoryStartRampDuration();
     trajectory_started_ = true;
     ROS_INFO("Takeoff reference reached, starting %s.", shapetrajectory::typeName(trajectory_type_));
   }
 
   trigger_time_ = (curr_time_ - start_time_).toSec();
-
-  p_targ = motionPrimitives_.at(motion_selector_)->getPosition(trigger_time_);
-  v_targ = motionPrimitives_.at(motion_selector_)->getVelocity(trigger_time_);
-  if (pubreference_type_ != 0) {
-    a_targ = motionPrimitives_.at(motion_selector_)->getAcceleration(trigger_time_);
-    j_targ = motionPrimitives_.at(motion_selector_)->getJerk(trigger_time_);
-  }
-  updateReferenceYaw(trigger_time_);
+  const double omega_time = std::max(0.0, (curr_time_ - omega_schedule_start_time_).toSec());
+  evaluateTrajectoryReference(trigger_time_, omega_time);
   applyTrajectoryStartRamp(trigger_time_);
+}
+
+void trajectoryPublisher::evaluateTrajectoryReference(double trajectory_time, double omega_time) {
+  std::shared_ptr<shapetrajectory> shape =
+      std::dynamic_pointer_cast<shapetrajectory>(motionPrimitives_.at(motion_selector_));
+  if (shape) {
+    p_targ = shape->getPosition(trajectory_time, omega_time);
+    v_targ = shape->getVelocity(trajectory_time, omega_time);
+    if (pubreference_type_ != 0) {
+      a_targ = shape->getAcceleration(trajectory_time, omega_time);
+      j_targ = shape->getJerk(trajectory_time, omega_time);
+    }
+  } else {
+    p_targ = motionPrimitives_.at(motion_selector_)->getPosition(trajectory_time);
+    v_targ = motionPrimitives_.at(motion_selector_)->getVelocity(trajectory_time);
+    if (pubreference_type_ != 0) {
+      a_targ = motionPrimitives_.at(motion_selector_)->getAcceleration(trajectory_time);
+      j_targ = motionPrimitives_.at(motion_selector_)->getJerk(trajectory_time);
+    }
+  }
+  updateReferenceYaw(trajectory_time, omega_time);
 }
 
 void trajectoryPublisher::initializePrimitives(int type) {
@@ -468,9 +519,86 @@ void trajectoryPublisher::resetTrajectoryStart() {
   shape_phase_shift_ = 0.0;
   applyShapeParams();
   updateTakeoffTarget();
+  transition_active_ = false;
+  trajectory_started_ = false;
+  start_transition_pending_ = true;
+  holding_target_ = p_mav_;
+  holding_yaw_ = yaw_targ_;
+  start_time_ = ros::Time::now();
+  omega_schedule_start_time_ = start_time_;
+  setHoldingReference();
+}
+
+void trajectoryPublisher::startTracking() {
+  tracking_requested_ = true;
+  resetTrajectoryStart();
+  ROS_INFO("Trajectory tracking requested: waiting for pose, OFFBOARD and armed before moving to %s start.",
+           shapetrajectory::typeName(trajectory_type_));
+}
+
+void trajectoryPublisher::stopTracking() {
+  if (!tracking_requested_ && !transition_active_) {
+    return;
+  }
+  tracking_requested_ = false;
+  start_transition_pending_ = false;
   trajectory_started_ = false;
   start_time_ = ros::Time::now();
-  startTrajectoryTransition();
+  omega_schedule_start_time_ = start_time_;
+  startStopTransition();
+}
+
+void trajectoryPublisher::startStopTransition() {
+  transition_active_ = false;
+  const Eigen::Vector3d position_start = p_mav_;
+  const Eigen::Vector3d velocity_start = v_mav_;
+  const double speed = velocity_start.norm();
+  holding_yaw_ = yaw_targ_;
+
+  if (speed <= trajectory_switch_stop_speed_threshold_) {
+    holding_target_ = position_start;
+    setHoldingReference();
+    ROS_INFO("Trajectory tracking stopped; holding current position.");
+    return;
+  }
+
+  const double stop_deceleration = std::max(0.1, trajectory_stop_deceleration_limit_);
+  const double stop_min_duration = std::max(0.1, trajectory_stop_min_duration_);
+  const double brake_duration =
+      clampDouble(1.5 * speed / stop_deceleration, stop_min_duration,
+                  std::max(stop_min_duration, trajectory_switch_transition_max_duration_));
+  holding_target_ = position_start + 0.5 * velocity_start * brake_duration;
+  transition_final_target_ = holding_target_;
+  startTransitionSegment(position_start, velocity_start, Eigen::Vector3d::Zero(), holding_target_, yaw_targ_,
+                         holding_yaw_, brake_duration, 3);
+  transition_active_ = true;
+  ROS_INFO("Trajectory tracking stopping: braking for %.2f s over %.2f m, then holding.", brake_duration,
+           (holding_target_ - position_start).norm());
+}
+
+void trajectoryPublisher::setHoldingReference() {
+  p_targ = holding_target_;
+  v_targ.setZero();
+  a_targ.setZero();
+  j_targ.setZero();
+  yaw_targ_ = holding_yaw_;
+}
+
+void trajectoryPublisher::rebaseOmegaSchedule() {
+  if (!trajectory_started_ || transition_active_) {
+    shape_phase_shift_ = 0.0;
+    omega_schedule_start_time_ = ros::Time::now();
+    return;
+  }
+
+  const ros::Time now = ros::Time::now();
+  const double omega_time = std::max(0.0, (now - omega_schedule_start_time_).toSec());
+  std::shared_ptr<shapetrajectory> shape =
+      std::dynamic_pointer_cast<shapetrajectory>(motionPrimitives_.at(motion_selector_));
+  if (shape) {
+    shape_phase_shift_ += shape->getPhaseAdvance(omega_time);
+  }
+  omega_schedule_start_time_ = now;
 }
 
 void trajectoryPublisher::updatePrimitives() {
@@ -600,13 +728,24 @@ void trajectoryPublisher::updateTransitionReference() {
     return;
   }
 
+  if (transition_stage_ == 3) {
+    holding_target_ = p_targ;
+    holding_yaw_ = yaw_targ_;
+    transition_active_ = false;
+    trajectory_started_ = false;
+    setHoldingReference();
+    ROS_INFO("Trajectory tracking stopped; braking complete, holding position.");
+    return;
+  }
+
   transition_active_ = false;
   trajectory_started_ = false;
   start_time_ = curr_time_;
+  omega_schedule_start_time_ = curr_time_;
   setTakeoffReference();
 }
 
-void trajectoryPublisher::updateReferenceYaw(double trajectory_time) {
+void trajectoryPublisher::updateReferenceYaw(double trajectory_time, double omega_time) {
   yaw_targ_ = trajectory_yaw_lock_ ? trajectory_yaw_fixed_ : 0.0;
   if (trajectory_yaw_lock_) {
     return;
@@ -616,7 +755,7 @@ void trajectoryPublisher::updateReferenceYaw(double trajectory_time) {
   }
   std::shared_ptr<shapetrajectory> shape = std::dynamic_pointer_cast<shapetrajectory>(motionPrimitives_.at(motion_selector_));
   if (shape) {
-    yaw_targ_ = shape->getYaw(trajectory_time);
+    yaw_targ_ = shape->getYaw(trajectory_time, omega_time);
   }
 }
 
@@ -903,16 +1042,32 @@ void trajectoryPublisher::offboardManagerCallback(const ros::TimerEvent& event) 
 }
 
 bool trajectoryPublisher::triggerCallback(std_srvs::SetBool::Request& req, std_srvs::SetBool::Response& res) {
-  resetTrajectoryStart();
+  if (req.data) {
+    if (!mavpose_received_) {
+      res.success = false;
+      res.message = "cannot start trajectory: local position has not been received";
+      return true;
+    }
+    startTracking();
+  } else {
+    stopTracking();
+  }
+
   res.success = true;
-  res.message = "trajectory triggered";
+  res.message = tracking_requested_ ? "trajectory start accepted" : "trajectory stop accepted";
   return true;
 }
 
 void trajectoryPublisher::motionselectorCallback(const std_msgs::Int32& selector_msg) {
   if (selector_msg.data >= TRAJ_FIGURE8_HORIZONTAL && selector_msg.data <= TRAJ_FAST_CIRCLE) {
     trajectory_type_ = selector_msg.data;
-    resetTrajectoryStart();
+    if (tracking_requested_) {
+      resetTrajectoryStart();
+    } else {
+      shape_phase_shift_ = 0.0;
+      applyShapeParams();
+      updateTakeoffTarget();
+    }
     ROS_INFO("Trajectory switched by motionselector: %s", shapetrajectory::typeName(trajectory_type_));
   }
 }
@@ -921,6 +1076,15 @@ void trajectoryPublisher::mavposeCallback(const geometry_msgs::PoseStamped& msg)
   p_mav_(0) = msg.pose.position.x;
   p_mav_(1) = msg.pose.position.y;
   p_mav_(2) = msg.pose.position.z;
+  if (!mavpose_received_) {
+    mavpose_received_ = true;
+    if (!tracking_requested_ && !transition_active_) {
+      holding_target_ = p_mav_;
+      holding_yaw_ = yaw_targ_;
+      setHoldingReference();
+      ROS_INFO("Local position received; standby reference locked to current position.");
+    }
+  }
   updatePrimitives();
 }
 
@@ -1003,6 +1167,8 @@ void trajectoryPublisher::seedDynamicReconfigure(trajectory_publisher::Trajector
   config.trajectory_switch_transition_acceleration_limit =
       roundToFourDecimals(trajectory_switch_transition_acceleration_limit_);
   config.trajectory_switch_stop_speed_threshold = roundToFourDecimals(trajectory_switch_stop_speed_threshold_);
+  config.trajectory_stop_deceleration_limit = roundToFourDecimals(trajectory_stop_deceleration_limit_);
+  config.trajectory_stop_min_duration = roundToFourDecimals(trajectory_stop_min_duration_);
 }
 
 bool trajectoryPublisher::activeShapeGeometryChanged(
@@ -1144,6 +1310,8 @@ void trajectoryPublisher::dynamicReconfigureCallback(trajectory_publisher::Traje
   config.trajectory_switch_transition_acceleration_limit =
       roundToFourDecimals(config.trajectory_switch_transition_acceleration_limit);
   config.trajectory_switch_stop_speed_threshold = roundToFourDecimals(config.trajectory_switch_stop_speed_threshold);
+  config.trajectory_stop_deceleration_limit = roundToFourDecimals(config.trajectory_stop_deceleration_limit);
+  config.trajectory_stop_min_duration = roundToFourDecimals(config.trajectory_stop_min_duration);
 
   updateOmegaProfilesFromConfig(config);
 
@@ -1160,10 +1328,8 @@ void trajectoryPublisher::dynamicReconfigureCallback(trajectory_publisher::Traje
   const bool omega_changed = omega_mode_ != config.omega_mode || omega_value_ != config.omega_value ||
                              omega_start_ != config.omega_start || omega_end_ != config.omega_end ||
                              omega_duration_ != config.omega_duration;
-  if (!trajectory_changed && !geometry_changed && omega_changed && omega_mode_ == TRAJ_OMEGA_FIXED &&
-      config.omega_mode == TRAJ_OMEGA_FIXED && trajectory_started_ && !transition_active_) {
-    const double elapsed_time = std::max(0.0, (ros::Time::now() - start_time_).toSec());
-    shape_phase_shift_ += (omega_value_ - config.omega_value) * elapsed_time;
+  if (!trajectory_changed && !geometry_changed && omega_changed) {
+    rebaseOmegaSchedule();
   }
 
   trajectory_type_ = config.trajName;
@@ -1190,16 +1356,28 @@ void trajectoryPublisher::dynamicReconfigureCallback(trajectory_publisher::Traje
   trajectory_switch_transition_velocity_limit_ = config.trajectory_switch_transition_velocity_limit;
   trajectory_switch_transition_acceleration_limit_ = config.trajectory_switch_transition_acceleration_limit;
   trajectory_switch_stop_speed_threshold_ = config.trajectory_switch_stop_speed_threshold;
+  trajectory_stop_deceleration_limit_ = config.trajectory_stop_deceleration_limit;
+  trajectory_stop_min_duration_ = config.trajectory_stop_min_duration;
 
   if (trajectory_changed || geometry_changed) {
-    resetTrajectoryStart();
-    ROS_INFO("Trajectory reconfigured: trajName=%s omega=%.4f, smooth transition to start.",
-             shapetrajectory::typeName(trajectory_type_), omega_value_);
+    if (tracking_requested_) {
+      resetTrajectoryStart();
+      ROS_INFO("Trajectory reconfigured: trajName=%s omega=%.4f, smooth transition to start.",
+               shapetrajectory::typeName(trajectory_type_), omega_value_);
+    } else {
+      shape_phase_shift_ = 0.0;
+      applyShapeParams();
+      updateTakeoffTarget();
+      ROS_INFO("Trajectory configured while stopped: trajName=%s omega=%.4f.",
+               shapetrajectory::typeName(trajectory_type_), omega_value_);
+    }
   } else {
     applyShapeParams();
     if (omega_changed) {
-      ROS_INFO("Trajectory omega reconfigured without restart: trajName=%s omega=%.4f",
-               shapetrajectory::typeName(trajectory_type_), omega_value_);
+      ROS_INFO("Trajectory omega schedule restarted from its start value: trajName=%s omega_start=%.4f",
+               shapetrajectory::typeName(trajectory_type_),
+               omega_mode_ == TRAJ_OMEGA_FIXED ? omega_value_ : omega_start_);
     }
   }
+
 }

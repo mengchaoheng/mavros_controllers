@@ -30,6 +30,8 @@
   <arg name="takeoff_before_trajectory" default="true"/>
   <arg name="adaptive_trajectory_start_ramp" default="true"/>
   <arg name="trajectory_start_ramp_duration" default="5.0"/>
+  <arg name="trajectory_stop_deceleration_limit" default="5.0"/>
+  <arg name="trajectory_stop_min_duration" default="0.3"/>
 
   <include file="$(find geometric_controller)/launch/sitl_trajectory_track.launch">
     <arg name="mav_name" value="$(arg mav_name)"/>
@@ -61,6 +63,8 @@
     <arg name="takeoff_before_trajectory" value="$(arg takeoff_before_trajectory)"/>
     <arg name="adaptive_trajectory_start_ramp" value="$(arg adaptive_trajectory_start_ramp)"/>
     <arg name="trajectory_start_ramp_duration" value="$(arg trajectory_start_ramp_duration)"/>
+    <arg name="trajectory_stop_deceleration_limit" value="$(arg trajectory_stop_deceleration_limit)"/>
+    <arg name="trajectory_stop_min_duration" value="$(arg trajectory_stop_min_duration)"/>
 
     <arg name="auto_offboard" value="false"/>
     <arg name="auto_arm" value="false"/>

@@ -1,0 +1,18 @@
+<library path="src">
+  <class name="trajectory_publisher/TrajectoryReconfigure"
+         type="trajectory_publisher_gui.trajectory_reconfigure_plugin.TrajectoryReconfigurePlugin"
+         base_class_type="rqt_gui_py::Plugin">
+    <description>
+      Trajectory dynamic parameters with explicit start and stop buttons.
+    </description>
+    <qtgui>
+      <group>
+        <label>Configuration</label>
+        <icon type="theme">folder</icon>
+      </group>
+      <label>Trajectory Parameters</label>
+      <icon type="theme">applications-engineering</icon>
+      <statustip>Configure, start and stop trajectory tracking.</statustip>
+    </qtgui>
+  </class>
+</library>
