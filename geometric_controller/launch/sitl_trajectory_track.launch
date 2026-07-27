@@ -19,10 +19,12 @@
 
   <arg name="cmdloop_rate" default="250.0" />
   <arg name="controller_type" default="0" />
+  <!-- For other mav model, this maybe another value -->
   <arg name="max_acc" default="50.0" />
   <arg name="KR_r" default="4.0" />
   <arg name="KR_p" default="4.0" />
   <arg name="KR_y" default="4.0" />
+  <!-- For other mav model, this maybe another value -->
   <arg name="normalizedthrust_constant" default="0.022" />
   <arg name="normalizedthrust_offset" default="0.0" />
   <arg name="Kp_x" default="10.0" />
